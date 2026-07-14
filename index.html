@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>JMTchat</title>
+<link rel="icon" href="logo.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --navy:#0b1b3a;
+    --navy-dark:#071227;
+    --gold:#ffcc33;
+    --blue:#1877e6;
+    --bg:#eef2f7;
+    --card:#ffffff;
+    --text:#101828;
+    --muted:#667085;
+    --danger:#e6453b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:'Segoe UI',Roboto,Arial,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    height:100vh;
+    overflow:hidden;
+  }
+  .screen{display:none;height:100vh;flex-direction:column;}
+  .screen.active{display:flex;}
+  .hidden{display:none !important;}
+
+  /* ---------- Top bar commun ---------- */
+  .topbar{
+    background:var(--navy);
+    color:#fff;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:12px 16px;
+    box-shadow:0 2px 6px rgba(0,0,0,.15);
+    flex-shrink:0;
+  }
+  .topbar img.logo{width:32px;height:32px;border-radius:8px;object-fit:cover;}
+  .topbar h1{font-size:18px;font-weight:700;}
+  .topbar .sub{font-size:12px;color:var(--gold);margin-left:auto;}
+
+  /* ---------- Onboarding ---------- */
+  #screen-onboarding{
+    align-items:center;justify-content:center;
+    background:linear-gradient(160deg,var(--navy) 0%,var(--navy-dark) 100%);
+    padding:24px;
+  }
+  .auth-card{
+    background:var(--card);
+    width:100%;max-width:400px;
+    border-radius:16px;
+    padding:28px 24px;
+    box-shadow:0 20px 40px rgba(0,0,0,.35);
+    text-align:center;
+  }
+  .auth-card img.logo-big{width:84px;height:84px;border-radius:20px;margin-bottom:8px;object-fit:cover;}
+  .auth-card h2{font-size:20px;margin-bottom:4px;}
+  .auth-card p.tag{color:var(--muted);font-size:13px;margin-bottom:20px;}
+  .field{text-align:left;margin-bottom:14px;}
+  .field label{font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px;}
+  .field input, .field select{
+    width:100%;padding:11px 12px;border:1px solid #d0d5dd;border-radius:10px;font-size:14px;outline:none;
+  }
+  .field input:focus{border-color:var(--blue);}
+  .btn{
+    width:100%;padding:12px;border:none;border-radius:10px;
+    background:var(--blue);color:#fff;font-size:15px;font-weight:700;
+    cursor:pointer;transition:.15s;
+  }
+  .btn:hover{filter:brightness(1.08);}
+  .btn.gold{background:var(--gold);color:var(--navy-dark);}
+  .btn.ghost{background:transparent;color:var(--navy);border:1px solid #d0d5dd;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .creator-link{
+    margin-top:18px;font-size:12px;color:var(--muted);
+    background:var(--navy);color:var(--gold);
+    display:inline-block;padding:6px 14px;border-radius:20px;
+    cursor:pointer;font-weight:700;letter-spacing:.5px;
+  }
+
+  .code-boxes{display:flex;gap:10px;justify-content:center;margin-bottom:16px;}
+  .code-boxes input{
+    width:48px;height:56px;text-align:center;font-size:22px;font-weight:700;
+    border:1px solid #d0d5dd;border-radius:10px;
+  }
+  .demo-code{
+    background:#fff7e0;border:1px dashed var(--gold);color:#8a6100;
+    padding:10px;border-radius:10px;font-size:13px;margin-bottom:16px;
+  }
+
+  .avatar-picker{position:relative;width:96px;height:96px;margin:0 auto 16px;}
+  .avatar-picker img{width:96px;height:96px;border-radius:50%;object-fit:cover;background:#dfe3e8;border:3px solid var(--gold);}
+  .avatar-picker .cam{
+    position:absolute;bottom:0;right:0;background:var(--blue);color:#fff;
+    width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:14px;cursor:pointer;border:2px solid #fff;
+  }
+
+  /* ---------- Modal créateur ---------- */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.5);
+    display:flex;align-items:center;justify-content:center;z-index:200;
+  }
+
+  /* ---------- App principale ---------- */
+  #screen-app{}
+  .app-body{flex:1;display:flex;overflow:hidden;}
+  .tabpanel{flex:1;overflow-y:auto;display:none;}
+  .tabpanel.active{display:block;}
+
+  .bottom-nav{
+    display:flex;background:var(--navy);flex-shrink:0;
+    box-shadow:0 -2px 8px rgba(0,0,0,.15);
+  }
+  .bottom-nav button{
+    flex:1;background:none;border:none;color:#9fb0d0;padding:10px 4px;
+    font-size:11px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;
+  }
+  .bottom-nav button.active{color:var(--gold);}
+  .bottom-nav button .ic{font-size:20px;}
+
+  /* Welcome banner */
+  .welcome-banner{
+    background:linear-gradient(135deg,var(--navy),#123064);
+    color:#fff;padding:16px;display:flex;align-items:center;gap:12px;
+  }
+  .welcome-banner img{width:48px;height:48px;border-radius:50%;object-fit:cover;border:2px solid var(--gold);}
+  .welcome-banner .name{font-weight:700;}
+  .welcome-banner .sub{font-size:12px;color:#c9d4ea;}
+
+  /* Liste contacts / conversations */
+  .list-item{
+    display:flex;align-items:center;gap:12px;padding:12px 16px;
+    border-bottom:1px solid #eef0f3;cursor:pointer;background:var(--card);
+  }
+  .list-item:hover{background:#f7f9fc;}
+  .list-item img.avatar{width:48px;height:48px;border-radius:50%;object-fit:cover;background:#dfe3e8;}
+  .list-item .info{flex:1;min-width:0;}
+  .list-item .info .name{font-weight:600;font-size:14.5px;}
+  .list-item .info .last{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dot{width:10px;height:10px;border-radius:50%;background:#c0c5cc;flex-shrink:0;}
+  .dot.online{background:#22c55e;}
+  .section-title{padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+
+  .empty-state{padding:40px 20px;text-align:center;color:var(--muted);font-size:13.5px;}
+
+  /* Conversation */
+  #screen-conv{}
+  .conv-header{
+    background:var(--navy);color:#fff;display:flex;align-items:center;gap:10px;padding:10px 12px;flex-shrink:0;
+  }
+  .conv-header img{width:38px;height:38px;border-radius:50%;object-fit:cover;}
+  .conv-header .back{font-size:20px;cursor:pointer;padding:4px;}
+  .conv-header .icons{margin-left:auto;display:flex;gap:16px;font-size:18px;}
+  .conv-messages{flex:1;overflow-y:auto;padding:14px;background:#dde7ef;display:flex;flex-direction:column;gap:8px;}
+  .bubble{max-width:75%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.35;position:relative;}
+  .bubble.mine{align-self:flex-end;background:#dcf3c9;border-bottom-right-radius:3px;}
+  .bubble.theirs{align-self:flex-start;background:#fff;border-bottom-left-radius:3px;}
+  .bubble .time{display:block;font-size:10px;color:var(--muted);margin-top:3px;text-align:right;}
+  .conv-inputbar{
+    display:flex;align-items:center;gap:8px;padding:8px 10px;background:#f0f2f5;flex-shrink:0;
+    border-top:1px solid #dfe3e8;position:relative;
+  }
+  .icon-btn{
+    background:none;border:none;font-size:20px;cursor:pointer;color:var(--navy);padding:6px;
+  }
+  .conv-inputbar input{
+    flex:1;padding:10px 14px;border-radius:20px;border:1px solid #d0d5dd;font-size:14px;outline:none;
+  }
+  .send-btn{
+    background:var(--blue);color:#fff;border:none;width:38px;height:38px;border-radius:50%;
+    font-size:16px;cursor:pointer;flex-shrink:0;
+  }
+  .attach-menu{
+    position:absolute;bottom:56px;left:10px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);
+    padding:10px;display:flex;gap:14px;
+  }
+  .attach-menu .opt{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;width:60px;}
+  .attach-menu .opt .circ{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:19px;color:#fff;}
+
+  /* Actualité (statuts) */
+  .status-my{
+    display:flex;align-items:center;gap:14px;padding:16px;background:var(--card);border-bottom:8px solid var(--bg);
+  }
+  .status-my img{width:54px;height:54px;border-radius:50%;object-fit:cover;background:#dfe3e8;border:2px solid var(--gold);}
+  .status-ring{border:3px solid var(--blue);}
+  .status-card{
+    display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #eef0f3;cursor:pointer;
+  }
+  .status-card img{width:50px;height:50px;border-radius:50%;object-fit:cover;border:3px solid var(--blue);}
+  .status-view{
+    position:fixed;inset:0;background:#000;z-index:300;display:flex;flex-direction:column;
+  }
+  .status-view .sv-header{display:flex;align-items:center;gap:10px;padding:14px;color:#fff;}
+  .status-view .sv-header img{width:36px;height:36px;border-radius:50%;object-fit:cover;}
+  .status-view .sv-content{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;color:#fff;font-size:22px;font-weight:600;}
+
+  .fab{
+    position:absolute;right:18px;bottom:78px;background:var(--blue);color:#fff;border:none;
+    width:52px;height:52px;border-radius:50%;font-size:22px;box-shadow:0 6px 16px rgba(0,0,0,.25);cursor:pointer;
+  }
+  .fab.gold{background:var(--gold);color:var(--navy-dark);}
+
+  /* Groupes */
+  .group-avatar{width:50px;height:50px;border-radius:50%;object-fit:cover;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;}
+
+  /* Journal d'appel */
+  .call-item .ic-call{font-size:18px;}
+  .call-item .missed{color:var(--danger);}
+
+  /* Overlays génériques (créer groupe, sélection membres, etc.) */
+  .sheet{
+    position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:250;
+  }
+  .sheet-content{
+    background:var(--card);width:100%;max-width:480px;border-radius:18px 18px 0 0;max-height:88vh;overflow-y:auto;
+    padding-bottom:16px;
+  }
+  .sheet-header{
+    display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #eef0f3;
+    position:sticky;top:0;background:var(--card);
+  }
+  .sheet-header h3{font-size:16px;}
+  .sheet-header .close{font-size:20px;cursor:pointer;color:var(--muted);}
+  .sheet-body{padding:16px;}
+
+  .select-row{display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer;}
+  .select-row img{width:42px;height:42px;border-radius:50%;object-fit:cover;background:#dfe3e8;}
+  .select-row input[type=checkbox]{width:18px;height:18px;margin-left:auto;}
+
+  .menu3dots{position:relative;}
+  .dropdown{
+    position:absolute;right:0;top:36px;background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.2);
+    min-width:220px;z-index:60;overflow:hidden;
+  }
+  .dropdown .item{padding:12px 16px;font-size:13.5px;cursor:pointer;color:var(--text);}
+  .dropdown .item:hover{background:#f5f6f8;}
+
+  .toast{
+    position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
+    background:var(--navy-dark);color:#fff;padding:10px 18px;border-radius:20px;font-size:13px;
+    z-index:500;box-shadow:0 6px 16px rgba(0,0,0,.3);
+  }
+
+  .badge-creator{background:var(--gold);color:var(--navy-dark);font-size:10px;font-weight:800;padding:2px 8px;border-radius:10px;margin-left:6px;}
+
+  ::-webkit-scrollbar{width:6px;}
+  ::-webkit-scrollbar-thumb{background:#c3c9d1;border-radius:3px;}
+</style>
+</head>
+<body>
+
+<!-- ============ ONBOARDING ============ -->
+<div id="screen-onboarding" class="screen active">
+  <div class="auth-card" id="card-step1">
+    <img src="logo.png" class="logo-big" alt="JMTchat">
+    <h2>Bienvenue sur JMTchat</h2>
+    <p class="tag">Créez votre compte pour commencer à discuter</p>
+    <div class="field">
+      <label>Nom et prénom</label>
+      <input id="inp-fullname" type="text" placeholder="Ex: Jean Marc Kouassi">
+    </div>
+    <div class="field">
+      <label>Numéro de téléphone (avec indicatif pays)</label>
+      <input id="inp-phone" type="tel" placeholder="+225 07 00 00 00 00">
+    </div>
+    <div class="field">
+      <label>Adresse mail</label>
+      <input id="inp-email" type="email" placeholder="exemple@mail.com">
+    </div>
+    <button class="btn" onclick="startVerification()">Continuer</button>
+    <div class="creator-link" onclick="openCreatorModal()">GJM</div>
+  </div>
+
+  <div class="auth-card hidden" id="card-step2">
+    <h2>Vérification</h2>
+    <p class="tag">Entrez le code envoyé au numéro saisi</p>
+    <div class="demo-code" id="demo-code-box">Code démo (pas de vrai SMS pour l'instant) : <strong id="demo-code-val">----</strong></div>
+    <div class="code-boxes">
+      <input maxlength="1" class="code-in">
+      <input maxlength="1" class="code-in">
+      <input maxlength="1" class="code-in">
+      <input maxlength="1" class="code-in">
+    </div>
+    <button class="btn" onclick="verifyCode()">Valider</button>
+    <button class="btn ghost" style="margin-top:10px;" onclick="backToStep1()">Retour</button>
+  </div>
+
+  <div class="auth-card hidden" id="card-step3">
+    <h2>Votre profil</h2>
+    <p class="tag">Personnalisez votre compte JMTchat</p>
+    <div class="avatar-picker">
+      <img id="avatar-preview" src="https://api.dicebear.com/7.x/thumbs/svg?seed=default" alt="avatar">
+      <div class="cam" onclick="document.getElementById('avatar-file').click()">📷</div>
+      <input type="file" id="avatar-file" accept="image/*" class="hidden" onchange="onAvatarChosen(event)">
+    </div>
+    <div class="field">
+      <label>Nom de profil (nom d'affichage)</label>
+      <input id="inp-profilename" type="text" placeholder="Ex: JeanMarc_GJM">
+    </div>
+    <div class="field">
+      <label>Numéro de téléphone</label>
+      <input id="inp-phone-readonly" type="text" disabled>
+    </div>
+    <button class="btn" onclick="finishProfile()">Valider mon profil</button>
+  </div>
+</div>
+
+<!-- Modal créateur -->
+<div id="creator-modal" class="modal-overlay hidden">
+  <div class="auth-card" style="max-width:340px;">
+    <h2>Espace créateur</h2>
+    <p class="tag">Accès réservé à l'administrateur GJM</p>
+    <div class="field">
+      <label>Nom</label>
+      <input id="creator-name" type="text" placeholder="Nom">
+    </div>
+    <div class="field">
+      <label>Mot de passe</label>
+      <input id="creator-pass" type="password" placeholder="Mot de passe">
+    </div>
+    <button class="btn gold" onclick="creatorLogin()">Se connecter</button>
+    <button class="btn ghost" style="margin-top:10px;" onclick="closeCreatorModal()">Annuler</button>
+  </div>
+</div>
+
+<!-- ============ APP PRINCIPALE ============ -->
+<div id="screen-app" class="screen">
+  <div class="topbar">
+    <img src="logo.png" class="logo" alt="JMTchat">
+    <h1 id="tab-title">JMTchat</h1>
+    <span class="sub" id="creator-badge-top"></span>
+  </div>
+
+  <div class="app-body">
+
+    <!-- TCHAT -->
+    <div id="tab-tchat" class="tabpanel active">
+      <div class="welcome-banner" id="welcome-banner">
+        <img id="my-avatar-small" src="">
+        <div>
+          <div class="name" id="my-name-display">—</div>
+          <div class="sub">Bienvenue sur JMTchat 👋</div>
+        </div>
+      </div>
+      <div class="section-title">Discussions</div>
+      <div id="conv-list"><div class="empty-state">Aucune conversation pour l'instant.</div></div>
+      <div class="section-title">Tous les utilisateurs JMTchat</div>
+      <div id="contact-list"><div class="empty-state">Chargement...</div></div>
+    </div>
+
+    <!-- ACTUALITE -->
+    <div id="tab-actu" class="tabpanel">
+      <div class="status-my" onclick="openAddStatus()">
+        <img id="my-avatar-status" src="">
+        <div>
+          <div class="name" style="font-weight:700;">Ajouter un statut</div>
+          <div class="sub" style="font-size:12px;color:var(--muted);">Texte, photo, vidéo ou vocal</div>
+        </div>
+      </div>
+      <div class="section-title">Statuts récents</div>
+      <div id="status-list"><div class="empty-state">Aucun statut pour le moment.</div></div>
+    </div>
+
+    <!-- GROUPE -->
+    <div id="tab-groupe" class="tabpanel" style="position:relative;">
+      <div class="section-title">Mes groupes</div>
+      <div id="group-list"><div class="empty-state">Aucun groupe pour l'instant.<br>Créez-en un avec le bouton +</div></div>
+      <button class="fab" onclick="openCreateGroup()">+</button>
+    </div>
+
+    <!-- JOURNAL D'APPEL -->
+    <div id="tab-journal" class="tabpanel">
+      <div class="section-title">Journal d'appels</div>
+      <div id="call-list"><div class="empty-state">Aucun appel pour le moment.<br><span style="color:var(--muted);">Les appels audio/vidéo arrivent dans la prochaine phase 🚧</span></div></div>
+    </div>
+
+  </div>
+
+  <div class="bottom-nav">
+    <button class="active" data-tab="tchat" onclick="switchTab('tchat')"><span class="ic">💬</span>Tchat</button>
+    <button data-tab="actu" onclick="switchTab('actu')"><span class="ic">📰</span>Actualité</button>
+    <button data-tab="groupe" onclick="switchTab('groupe')"><span class="ic">👥</span>Groupe</button>
+    <button data-tab="journal" onclick="switchTab('journal')"><span class="ic">📞</span>Journal d'appel</button>
+  </div>
+</div>
+
+<!-- ============ CONVERSATION (privée ou groupe) ============ -->
+<div id="screen-conv" class="screen">
+  <div class="conv-header">
+    <span class="back" onclick="closeConversation()">←</span>
+    <img id="conv-avatar" src="">
+    <div>
+      <div id="conv-name" style="font-weight:700;font-size:14.5px;"></div>
+      <div id="conv-status" style="font-size:11px;color:#c9d4ea;"></div>
+    </div>
+    <div class="icons">
+      <span title="Appel audio (bientôt)" onclick="callPlaceholder('audio')">📞</span>
+      <span title="Appel vidéo (bientôt)" onclick="callPlaceholder('video')">🎥</span>
+      <span id="conv-menu-btn" class="hidden" onclick="toggleGroupMenu()">⋮</span>
+    </div>
+  </div>
+  <div id="group-dropdown" class="dropdown hidden" style="position:fixed;top:52px;right:12px;">
+    <div class="item" onclick="openAddMembers()">Ajouter des membres</div>
+    <div class="item" onclick="openMembersList()">Voir tous les membres</div>
+    <div class="item" onclick="openPromoteAdmin()">Ajouter d'autres administrateurs</div>
+  </div>
+  <div id="conv-messages" class="conv-messages"></div>
+  <div class="conv-inputbar">
+    <button class="icon-btn" onclick="toggleAttachMenu()">📎</button>
+    <button class="icon-btn" onclick="cameraPlaceholder()">📷</button>
+    <input id="msg-input" type="text" placeholder="Écrire un message..." onkeydown="if(event.key==='Enter')sendMessage()">
+    <button class="icon-btn" onclick="voicePlaceholder()">🎤</button>
+    <button class="send-btn" onclick="sendMessage()">➤</button>
+    <div id="attach-menu" class="attach-menu hidden">
+      <div class="opt" onclick="docPlaceholder()"><div class="circ" style="background:#7b61ff;">📄</div>Document</div>
+      <div class="opt" onclick="galleryPlaceholder()"><div class="circ" style="background:#e6453b;">🖼️</div>Galerie</div>
+      <div class="opt" onclick="cameraPlaceholder()"><div class="circ" style="background:#1877e6;">📷</div>Caméra</div>
+      <div class="opt" onclick="locationPlaceholder()"><div class="circ" style="background:#22c55e;">📍</div>Localisation</div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script>
+/* ============================================================
+   CONFIGURATION SUPABASE — à remplir avec ton projet dédié
+   ============================================================ */
+const SUPABASE_URL = "https://VOTRE-PROJET.supabase.co";
+const SUPABASE_ANON_KEY = "VOTRE_CLE_ANON_PUBLIC";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const CREATOR_NAME = "Jean Marc";
+const CREATOR_PASS = "jeanmarcamp";
+
+let me = null;           // profil courant {id, full_name, phone, email, profile_name, avatar_url, is_creator}
+let pendingSignup = {};  // données en cours d'inscription
+let currentConv = null;  // {type:'user'|'group', id, name, avatar}
+let msgChannel = null;
+let allProfiles = [];
+let myGroups = [];
+
+/* ---------------- Utils ---------------- */
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.remove('hidden');
+  setTimeout(()=>t.classList.add('hidden'), 2200);
+}
+function genCode(){ return String(Math.floor(1000+Math.random()*9000)); }
+function initialsAvatar(name){
+  return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name||'U')}&backgroundColor=0b1b3a`;
+}
+function fmtTime(ts){
+  const d = new Date(ts);
+  return d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+}
+
+/* ---------------- Onboarding : étape 1 -> code ---------------- */
+function startVerification(){
+  const full_name = document.getElementById('inp-fullname').value.trim();
+  const phone = document.getElementById('inp-phone').value.trim();
+  const email = document.getElementById('inp-email').value.trim();
+  if(!full_name || !phone){ toast("Merci de remplir au moins le nom et le téléphone."); return; }
+  pendingSignup = { full_name, phone, email, code: genCode() };
+  document.getElementById('demo-code-val').textContent = pendingSignup.code;
+  document.getElementById('card-step1').classList.add('hidden');
+  document.getElementById('card-step2').classList.remove('hidden');
+  document.querySelectorAll('.code-in').forEach((el,i)=>{
+    el.value='';
+    el.oninput = ()=>{ if(el.value && document.querySelectorAll('.code-in')[i+1]) document.querySelectorAll('.code-in')[i+1].focus(); };
+  });
+}
+function backToStep1(){
+  document.getElementById('card-step2').classList.add('hidden');
+  document.getElementById('card-step1').classList.remove('hidden');
+}
+async function verifyCode(){
+  const vals = Array.from(document.querySelectorAll('.code-in')).map(i=>i.value).join('');
+  if(vals.length!==4){ toast("Entrez les 4 chiffres."); return; }
+  if(vals !== pendingSignup.code){ toast("Code incorrect."); return; }
+
+  // Vérifie si le numéro existe déjà
+  const { data: existing } = await sb.from('jmtchat_profiles').select('*').eq('phone', pendingSignup.phone).maybeSingle();
+  if(existing){
+    me = existing;
+    saveSession(me.id);
+    toast("Bienvenue à nouveau, " + (me.profile_name||me.full_name));
+    enterApp();
+    return;
+  }
+  document.getElementById('card-step2').classList.add('hidden');
+  document.getElementById('card-step3').classList.remove('hidden');
+  document.getElementById('inp-phone-readonly').value = pendingSignup.phone;
+  document.getElementById('inp-profilename').value = pendingSignup.full_name;
+}
+
+/* ---------------- Onboarding : étape 3 -> profil ---------------- */
+let avatarDataUrl = null;
+function onAvatarChosen(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    avatarDataUrl = reader.result;
+    document.getElementById('avatar-preview').src = avatarDataUrl;
+  };
+  reader.readAsDataURL(file);
+}
+async function finishProfile(){
+  const profile_name = document.getElementById('inp-profilename').value.trim() || pendingSignup.full_name;
+  let avatar_url = initialsAvatar(profile_name);
+
+  // Upload avatar réel si un fichier a été choisi (nécessite un bucket "jmtchat" public dans Supabase Storage)
+  const file = document.getElementById('avatar-file').files[0];
+  if(file){
+    try{
+      const path = `avatars/${Date.now()}_${file.name}`;
+      const { error: upErr } = await sb.storage.from('jmtchat').upload(path, file, { upsert:true });
+      if(!upErr){
+        const { data:pub } = sb.storage.from('jmtchat').getPublicUrl(path);
+        avatar_url = pub.publicUrl;
+      }
+    }catch(e){ console.warn("Upload avatar échoué, avatar par défaut utilisé.", e); }
+  }
+
+  const { data, error } = await sb.from('jmtchat_profiles').insert({
+    full_name: pendingSignup.full_name,
+    phone: pendingSignup.phone,
+    email: pendingSignup.email,
+    profile_name,
+    avatar_url,
+    is_online: true
+  }).select().single();
+
+  if(error){ toast("Erreur : " + error.message); return; }
+  me = data;
+  saveSession(me.id);
+  enterApp();
+}
+
+/* ---------------- Session ---------------- */
+function saveSession(id){ localStorage.setItem('jmtchat_session', id); }
+function getSession(){ return localStorage.getItem('jmtchat_session'); }
+function clearSession(){ localStorage.removeItem('jmtchat_session'); }
+
+async function tryAutoLogin(){
+  const sid = getSession();
+  if(!sid) return false;
+  const { data } = await sb.from('jmtchat_profiles').select('*').eq('id', sid).maybeSingle();
+  if(data){ me = data; enterApp(); return true; }
+  return false;
+}
+
+/* ---------------- Créateur ---------------- */
+function openCreatorModal(){ document.getElementById('creator-modal').classList.remove('hidden'); }
+function closeCreatorModal(){ document.getElementById('creator-modal').classList.add('hidden'); }
+function creatorLogin(){
+  const n = document.getElementById('creator-name').value.trim();
+  const p = document.getElementById('creator-pass').value;
+  if(n === CREATOR_NAME && p === CREATOR_PASS){
+    me = { id:'creator-local', full_name:CREATOR_NAME, profile_name:'Jean Marc (Créateur)', avatar_url: initialsAvatar('GJM'), is_creator:true };
+    closeCreatorModal();
+    enterApp();
+  } else {
+    toast("Nom ou mot de passe incorrect.");
+  }
+}
+
+/* ---------------- Entrée dans l'app ---------------- */
+async function enterApp(){
+  document.getElementById('screen-onboarding').classList.remove('active');
+  document.getElementById('screen-app').classList.add('active');
+  document.getElementById('my-name-display').textContent = me.profile_name || me.full_name;
+  document.getElementById('my-avatar-small').src = me.avatar_url || initialsAvatar(me.profile_name);
+  document.getElementById('my-avatar-status').src = me.avatar_url || initialsAvatar(me.profile_name);
+  if(me.is_creator){
+    document.getElementById('creator-badge-top').innerHTML = '<span class="badge-creator">CRÉATEUR</span>';
+  }
+  if(!me.is_creator){
+    await loadContacts();
+    await loadStatuses();
+    await loadGroups();
+    subscribeRealtime();
+  } else {
+    await loadCreatorDashboard();
+  }
+}
+
+function switchTab(tab){
+  document.querySelectorAll('.tabpanel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.bottom-nav button').forEach(b=>b.classList.remove('active'));
+  document.getElementById('tab-'+tab).classList.add('active');
+  document.querySelector(`.bottom-nav button[data-tab="${tab}"]`).classList.add('active');
+  const titles = {tchat:'JMTchat', actu:'Actualité', groupe:'Groupes', journal:"Journal d'appel"};
+  document.getElementById('tab-title').textContent = titles[tab];
+}
+
+/* ---------------- Tchat : contacts ---------------- */
+async function loadContacts(){
+  const { data } = await sb.from('jmtchat_profiles').select('*').neq('id', me.id).order('profile_name');
+  allProfiles = data || [];
+  const list = document.getElementById('contact-list');
+  if(!allProfiles.length){ list.innerHTML = '<div class="empty-state">Personne d\'autre pour l\'instant. Partage JMTchat autour de toi !</div>'; return; }
+  list.innerHTML = allProfiles.map(p => `
+    <div class="list-item" onclick="openConversation('user','${p.id}')">
+      <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+      <div class="info">
+        <div class="name">${p.profile_name || p.full_name}</div>
+        <div class="last">${p.is_online ? 'En ligne' : 'Hors ligne'}</div>
+      </div>
+      <div class="dot ${p.is_online?'online':''}"></div>
+    </div>`).join('');
+}
+
+/* ---------------- Conversation privée / groupe ---------------- */
+function convIdFor(otherId){
+  return [me.id, otherId].sort().join('_');
+}
+async function openConversation(type, id){
+  let name, avatar, convId;
+  if(type === 'user'){
+    const p = allProfiles.find(x=>x.id===id);
+    name = p.profile_name || p.full_name; avatar = p.avatar_url || initialsAvatar(name);
+    convId = convIdFor(id);
+    document.getElementById('conv-menu-btn').classList.add('hidden');
+  } else {
+    const g = myGroups.find(x=>x.id===id);
+    name = g.name; avatar = g.avatar_url || initialsAvatar(name);
+    convId = 'group_' + id;
+    document.getElementById('conv-menu-btn').classList.remove('hidden');
+  }
+  currentConv = { type, id, name, avatar, convId };
+  document.getElementById('conv-name').textContent = name;
+  document.getElementById('conv-status').textContent = type==='user' ? 'Discussion privée' : 'Groupe';
+  document.getElementById('conv-avatar').src = avatar;
+  document.getElementById('screen-app').classList.remove('active');
+  document.getElementById('screen-conv').classList.add('active');
+  await loadMessages();
+}
+function closeConversation(){
+  document.getElementById('screen-conv').classList.remove('active');
+  document.getElementById('screen-app').classList.add('active');
+  currentConv = null;
+}
+async function loadMessages(){
+  const box = document.getElementById('conv-messages');
+  box.innerHTML = '<div class="empty-state" style="color:#5b6b82;">Chargement...</div>';
+  const { data } = await sb.from('jmtchat_messages').select('*').eq('conversation_id', currentConv.convId).order('created_at');
+  renderMessages(data || []);
+}
+function renderMessages(msgs){
+  const box = document.getElementById('conv-messages');
+  if(!msgs.length){ box.innerHTML = '<div class="empty-state" style="color:#5b6b82;">Aucun message. Dites bonjour 👋</div>'; return; }
+  box.innerHTML = msgs.map(m => `
+    <div class="bubble ${m.sender_id===me.id?'mine':'theirs'}">
+      ${m.content}
+      <span class="time">${fmtTime(m.created_at)}</span>
+    </div>`).join('');
+  box.scrollTop = box.scrollHeight;
+}
+async function sendMessage(){
+  const input = document.getElementById('msg-input');
+  const content = input.value.trim();
+  if(!content || !currentConv) return;
+  input.value='';
+  const { error } = await sb.from('jmtchat_messages').insert({
+    conversation_id: currentConv.convId,
+    sender_id: me.id,
+    content,
+    msg_type: 'text'
+  });
+  if(error) toast("Erreur d'envoi : " + error.message);
+}
+
+function subscribeRealtime(){
+  if(msgChannel) sb.removeChannel(msgChannel);
+  msgChannel = sb.channel('jmtchat-messages')
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_messages' }, payload => {
+      const m = payload.new;
+      if(currentConv && m.conversation_id === currentConv.convId){
+        const box = document.getElementById('conv-messages');
+        const wasEmpty = box.querySelector('.empty-state');
+        if(wasEmpty) box.innerHTML='';
+        box.insertAdjacentHTML('beforeend', `
+          <div class="bubble ${m.sender_id===me.id?'mine':'theirs'}">
+            ${m.content}<span class="time">${fmtTime(m.created_at)}</span>
+          </div>`);
+        box.scrollTop = box.scrollHeight;
+      }
+    })
+    .subscribe();
+}
+
+/* ---------------- Placeholders médias (phase 2) ---------------- */
+function toggleAttachMenu(){ document.getElementById('attach-menu').classList.toggle('hidden'); }
+function voicePlaceholder(){ toast("🎙️ Messages vocaux : arrivent en phase 2."); }
+function cameraPlaceholder(){ toast("📷 Envoi photo/vidéo caméra : arrive en phase 2."); document.getElementById('attach-menu').classList.add('hidden'); }
+function galleryPlaceholder(){ toast("🖼️ Envoi depuis la galerie : arrive en phase 2."); document.getElementById('attach-menu').classList.add('hidden'); }
+function docPlaceholder(){ toast("📄 Envoi de documents : arrive en phase 2."); document.getElementById('attach-menu').classList.add('hidden'); }
+function locationPlaceholder(){ toast("📍 Partage de localisation : arrive en phase 2."); document.getElementById('attach-menu').classList.add('hidden'); }
+function callPlaceholder(type){ toast((type==='audio'?"📞 Appel audio":"🎥 Appel vidéo") + " : arrive en phase 2."); }
+
+/* ---------------- Actualité (statuts) ---------------- */
+async function loadStatuses(){
+  const { data } = await sb.from('jmtchat_statuses')
+    .select('*, jmtchat_profiles(profile_name, full_name, avatar_url)')
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending:false });
+  const list = document.getElementById('status-list');
+  if(!data || !data.length){ list.innerHTML = '<div class="empty-state">Aucun statut pour le moment.</div>'; return; }
+  list.innerHTML = data.map(s => `
+    <div class="status-card" onclick='viewStatus(${JSON.stringify(s.content)}, "${(s.jmtchat_profiles?.profile_name||s.jmtchat_profiles?.full_name||"Utilisateur").replace(/"/g,'')}", "${s.bg_color}")'>
+      <img src="${s.jmtchat_profiles?.avatar_url || initialsAvatar('U')}">
+      <div class="info">
+        <div class="name">${s.jmtchat_profiles?.profile_name || s.jmtchat_profiles?.full_name || 'Utilisateur'}</div>
+        <div class="last">${fmtTime(s.created_at)}</div>
+      </div>
+    </div>`).join('');
+}
+function openAddStatus(){
+  const sheet = document.createElement('div');
+  sheet.className='sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Ajouter un statut</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <div class="field"><label>Votre texte</label><textarea id="status-text" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;"></textarea></div>
+        <div style="display:flex;gap:10px;margin:14px 0;">
+          <button class="icon-btn" style="font-size:24px;" onclick="toast('🎙️ Statut vocal : phase 2')">🎙️</button>
+          <button class="icon-btn" style="font-size:24px;" onclick="toast('🖼️ Statut photo : phase 2')">🖼️</button>
+          <button class="icon-btn" style="font-size:24px;" onclick="toast('🎬 Statut vidéo : phase 2')">🎬</button>
+        </div>
+        <button class="btn" onclick="submitStatus()">Publier</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function submitStatus(){
+  const content = document.getElementById('status-text').value.trim();
+  if(!content){ toast("Écris quelque chose."); return; }
+  await sb.from('jmtchat_statuses').insert({ profile_id: me.id, status_type:'text', content, bg_color:'#0b1b3a' });
+  document.querySelector('.sheet').remove();
+  toast("Statut publié !");
+  loadStatuses();
+}
+function viewStatus(content, name, bg){
+  const v = document.createElement('div');
+  v.className='status-view';
+  v.style.background = bg || '#0b1b3a';
+  v.innerHTML = `
+    <div class="sv-header"><span onclick="this.closest('.status-view').remove()" style="cursor:pointer;font-size:20px;">←</span><div>${name}</div></div>
+    <div class="sv-content">${content}</div>`;
+  document.body.appendChild(v);
+}
+
+/* ---------------- Groupes ---------------- */
+async function loadGroups(){
+  const { data: memberships } = await sb.from('jmtchat_group_members').select('group_id, is_admin, jmtchat_groups(*)').eq('profile_id', me.id);
+  myGroups = (memberships||[]).map(m => ({...m.jmtchat_groups, is_admin:m.is_admin}));
+  const list = document.getElementById('group-list');
+  if(!myGroups.length){ list.innerHTML = '<div class="empty-state">Aucun groupe pour l\'instant.<br>Créez-en un avec le bouton +</div>'; return; }
+  list.innerHTML = myGroups.map(g => `
+    <div class="list-item" onclick="openConversation('group','${g.id}')">
+      ${g.avatar_url ? `<img class="avatar" src="${g.avatar_url}">` : `<div class="group-avatar">${(g.name||'G')[0].toUpperCase()}</div>`}
+      <div class="info">
+        <div class="name">${g.name} ${g.is_admin?'<span style="font-size:10px;color:var(--blue);">· admin</span>':''}</div>
+        <div class="last">Groupe JMTchat</div>
+      </div>
+    </div>`).join('');
+}
+function openCreateGroup(){
+  const sheet = document.createElement('div');
+  sheet.className='sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Créer un groupe</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <div class="field"><label>Nom du groupe</label><input id="grp-name" type="text" placeholder="Ex: Famille GJM"></div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">La photo du groupe pourra être ajoutée juste après (phase médias).</p>
+        <button class="btn" onclick="createGroupStep2()">Suivant : ajouter des membres</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+let newGroupSelectedMembers = [];
+function createGroupStep2(){
+  const name = document.getElementById('grp-name').value.trim();
+  if(!name){ toast("Donne un nom au groupe."); return; }
+  document.querySelector('.sheet').remove();
+  newGroupSelectedMembers = [];
+  const sheet = document.createElement('div');
+  sheet.className='sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Ajouter des membres</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        ${allProfiles.map(p => `
+          <div class="select-row">
+            <img src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+            <div>${p.profile_name || p.full_name}</div>
+            <input type="checkbox" value="${p.id}" onchange="toggleMember('${p.id}', this.checked)">
+          </div>`).join('') || '<p style="color:var(--muted);">Aucun autre utilisateur pour l\'instant.</p>'}
+        <button class="btn" style="margin-top:14px;" onclick="finalizeGroup('${name.replace(/'/g,"\\'")}')">Créer le groupe</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+function toggleMember(id, checked){
+  if(checked) newGroupSelectedMembers.push(id);
+  else newGroupSelectedMembers = newGroupSelectedMembers.filter(x=>x!==id);
+}
+async function finalizeGroup(name){
+  const { data: group, error } = await sb.from('jmtchat_groups').insert({ name, created_by: me.id }).select().single();
+  if(error){ toast("Erreur : " + error.message); return; }
+  const rows = [{ group_id: group.id, profile_id: me.id, is_admin:true }, ...newGroupSelectedMembers.map(id => ({ group_id: group.id, profile_id:id, is_admin:false }))];
+  await sb.from('jmtchat_group_members').insert(rows);
+  document.querySelector('.sheet').remove();
+  toast("Groupe créé !");
+  await loadGroups();
+  switchTab('groupe');
+}
+function toggleGroupMenu(){ document.getElementById('group-dropdown').classList.toggle('hidden'); }
+async function openMembersList(){
+  document.getElementById('group-dropdown').classList.add('hidden');
+  const { data } = await sb.from('jmtchat_group_members').select('*, jmtchat_profiles(*)').eq('group_id', currentConv.id);
+  const sheet = document.createElement('div');
+  sheet.className='sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Membres du groupe</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        ${data.map(m => `
+          <div class="select-row" style="cursor:default;">
+            <img src="${m.jmtchat_profiles.avatar_url || initialsAvatar(m.jmtchat_profiles.profile_name)}">
+            <div>
+              <div>${m.jmtchat_profiles.profile_name || m.jmtchat_profiles.full_name} ${m.is_admin?'<span style="font-size:10px;color:var(--blue);">· admin</span>':''}</div>
+              <div style="font-size:11px;color:var(--muted);">${m.jmtchat_profiles.phone}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function openAddMembers(){
+  document.getElementById('group-dropdown').classList.add('hidden');
+  const { data: current } = await sb.from('jmtchat_group_members').select('profile_id').eq('group_id', currentConv.id);
+  const currentIds = (current||[]).map(c=>c.profile_id);
+  const available = allProfiles.filter(p=>!currentIds.includes(p.id));
+  newGroupSelectedMembers = [];
+  const sheet = document.createElement('div');
+  sheet.className='sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Ajouter des membres</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        ${available.map(p => `
+          <div class="select-row">
+            <img src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+            <div>${p.profile_name || p.full_name}</div>
+            <input type="checkbox" value="${p.id}" onchange="toggleMember('${p.id}', this.checked)">
+          </div>`).join('') || '<p style="color:var(--muted);">Tout le monde est déjà dans le groupe.</p>'}
+        <button class="btn" style="margin-top:14px;" onclick="confirmAddMembers()">Ajouter</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function confirmAddMembers(){
+  if(!newGroupSelectedMembers.length){ toast("Sélectionne au moins une personne."); return; }
+  const rows = newGroupSelectedMembers.map(id => ({ group_id: currentConv.id, profile_id:id, is_admin:false }));
+  await sb.from('jmtchat_group_members').insert(rows);
+  document.querySelector('.sheet').remove();
+  toast("Membres ajoutés !");
+}
+async function openPromoteAdmin(){
+  document.getElementById('group-dropdown').classList.add('hidden');
+  const { data } = await sb.from('jmtchat_group_members').select('*, jmtchat_profiles(*)').eq('group_id', currentConv.id).eq('is_admin', false);
+  const sheet = document.createElement('div');
+  sheet.className='sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Ajouter un administrateur</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        ${(data||[]).map(m => `
+          <div class="select-row" onclick="promoteMember('${m.id}')">
+            <img src="${m.jmtchat_profiles.avatar_url || initialsAvatar(m.jmtchat_profiles.profile_name)}">
+            <div>${m.jmtchat_profiles.profile_name || m.jmtchat_profiles.full_name}</div>
+          </div>`).join('') || '<p style="color:var(--muted);">Tous les membres sont déjà administrateurs.</p>'}
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function promoteMember(memberRowId){
+  await sb.from('jmtchat_group_members').update({ is_admin:true }).eq('id', memberRowId);
+  document.querySelector('.sheet').remove();
+  toast("Nouvel administrateur ajouté !");
+}
+
+/* ---------------- Espace créateur (mini dashboard) ---------------- */
+async function loadCreatorDashboard(){
+  document.getElementById('tab-title').textContent = 'Espace créateur';
+  const { data: profiles } = await sb.from('jmtchat_profiles').select('*').order('created_at', {ascending:false});
+  const { data: groups } = await sb.from('jmtchat_groups').select('*');
+  const list = document.getElementById('contact-list');
+  document.getElementById('conv-list').innerHTML = `
+    <div style="padding:16px;">
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <div style="flex:1;background:#fff;border-radius:12px;padding:14px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;color:var(--navy);">${profiles?.length||0}</div>
+          <div style="font-size:11px;color:var(--muted);">Utilisateurs inscrits</div>
+        </div>
+        <div style="flex:1;background:#fff;border-radius:12px;padding:14px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;color:var(--navy);">${groups?.length||0}</div>
+          <div style="font-size:11px;color:var(--muted);">Groupes créés</div>
+        </div>
+      </div>
+    </div>`;
+  list.innerHTML = '<div class="section-title">Tous les utilisateurs</div>' + (profiles||[]).map(p => `
+    <div class="list-item">
+      <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+      <div class="info">
+        <div class="name">${p.profile_name || p.full_name}</div>
+        <div class="last">${p.phone} ${p.email?('· '+p.email):''}</div>
+      </div>
+    </div>`).join('');
+  document.querySelectorAll('.bottom-nav button').forEach(b=>{ if(b.dataset.tab!=='tchat') b.style.display='none'; });
+}
+
+/* ---------------- Démarrage ---------------- */
+window.addEventListener('DOMContentLoaded', async ()=>{
+  const ok = await tryAutoLogin();
+  if(!ok){
+    document.getElementById('screen-onboarding').classList.add('active');
+  }
+});
+</script>
+</body>
+</html>
