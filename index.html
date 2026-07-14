@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<meta name="theme-color" content="#0b1b3a">
+<link rel="manifest" href="manifest.json">
 <title>JMTchat</title>
 <link rel="icon" href="logo.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -359,6 +361,11 @@
           <div class="sub">Bienvenue sur JMTchat 👋 · Touche ici pour modifier ton profil</div>
         </div>
       </div>
+      <div id="push-banner" class="hidden" style="background:#fff7e0;border-bottom:1px solid #ffe4a3;padding:12px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="enablePushNotifications()">
+        <span style="font-size:20px;">🔔</span>
+        <div style="flex:1;font-size:13px;color:#8a6100;">Active les notifications pour ne rater aucun message, même appli fermée.</div>
+        <span style="font-size:12px;font-weight:700;color:var(--blue);">Activer</span>
+      </div>
       <div class="section-title">Discussions</div>
       <div id="conv-list"><div class="empty-state">Aucune conversation pour l'instant.</div></div>
       <div class="section-title">Tous les utilisateurs JMTchat</div>
@@ -449,6 +456,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const CREATOR_PASS = "jeanmarcamp";
+const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -645,6 +653,7 @@ async function enterApp(){
     await loadStatuses();
     await loadGroups();
     subscribeRealtime();
+    checkPushBanner();
   } else {
     await loadCreatorDashboard();
   }
@@ -1101,6 +1110,57 @@ async function promoteMember(memberRowId){
   toast("Nouvel administrateur ajouté !");
 }
 
+/* ---------------- Notifications push ---------------- */
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for(let i=0;i<rawData.length;i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+async function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return null;
+  try{ return await navigator.serviceWorker.register('service-worker.js'); }
+  catch(e){ console.warn("Service worker non enregistré :", e); return null; }
+}
+async function checkPushBanner(){
+  const banner = document.getElementById('push-banner');
+  if(!('Notification' in window) || !('PushManager' in window)){ banner.classList.add('hidden'); return; }
+  if(Notification.permission === 'granted'){ banner.classList.add('hidden'); return; }
+  if(Notification.permission === 'denied'){ banner.classList.add('hidden'); return; }
+  banner.classList.remove('hidden');
+}
+async function enablePushNotifications(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+    toast("Les notifications ne sont pas supportées sur ce navigateur.");
+    return;
+  }
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    const permission = await Notification.requestPermission();
+    if(permission !== 'granted'){
+      toast("Notifications refusées. Tu peux les réactiver dans les réglages du navigateur.");
+      return;
+    }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+    const subJson = sub.toJSON();
+    await sb.from('jmtchat_push_subscriptions').upsert({
+      profile_id: me.id,
+      endpoint: subJson.endpoint,
+      subscription: subJson
+    }, { onConflict: 'profile_id,endpoint' });
+    document.getElementById('push-banner').classList.add('hidden');
+    toast("Notifications activées !");
+  }catch(e){
+    console.error(e);
+    toast("Erreur d'activation des notifications.");
+  }
+}
+
 /* ---------------- Espace créateur (mini dashboard) ---------------- */
 async function loadCreatorDashboard(){
   document.getElementById('tab-title').textContent = 'Espace créateur';
@@ -1133,6 +1193,7 @@ async function loadCreatorDashboard(){
 
 /* ---------------- Démarrage ---------------- */
 window.addEventListener('DOMContentLoaded', async ()=>{
+  registerServiceWorker();
   await ensureAuthSession();
   const ok = await tryAutoLogin();
   if(!ok){
