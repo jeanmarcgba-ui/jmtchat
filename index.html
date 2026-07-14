@@ -781,19 +781,22 @@ function closeConversation(){
   document.getElementById('screen-app').classList.add('active');
   currentConv = null;
 }
+let messagesById = {};
 async function loadMessages(){
   const box = document.getElementById('conv-messages');
   box.innerHTML = '<div class="empty-state" style="color:#5b6b82;">Chargement...</div>';
   const { data } = await sb.from('jmtchat_messages').select('*').eq('conversation_id', currentConv.convId).order('created_at');
-  renderMessages(data || []);
+  const visible = (data || []).filter(m => !(m.deleted_by||[]).includes(me.id));
+  visible.forEach(m => messagesById[m.id] = m);
+  renderMessages(visible);
 }
 function renderMessages(msgs){
   const box = document.getElementById('conv-messages');
   if(!msgs.length){ box.innerHTML = '<div class="empty-state" style="color:#5b6b82;">Aucun message. Dites bonjour 👋</div>'; return; }
   box.innerHTML = msgs.map(m => `
-    <div class="bubble ${m.sender_id===me.id?'mine':'theirs'}">
-      ${renderBubbleContent(m)}
-      <span class="time">${fmtTime(m.created_at)}${(m.sender_id===me.id && currentConv.type==='user') ? ' '+ticksHtml(m.is_read) : ''}</span>
+    <div class="bubble ${m.sender_id===me.id?'mine':'theirs'}" ${m.is_deleted?'':`onclick="openMessageActions('${m.id}')"`} style="${m.is_deleted?'':'cursor:pointer;'}">
+      ${m.is_deleted ? '<em style="color:var(--muted);">🚫 Message supprimé</em>' : renderBubbleContent(m)}
+      <span class="time">${m.edited && !m.is_deleted ? '<em>modifié</em> · ' : ''}${fmtTime(m.created_at)}${(m.sender_id===me.id && currentConv.type==='user') ? ' '+ticksHtml(m.is_read) : ''}</span>
     </div>`).join('');
   box.scrollTop = box.scrollHeight;
 }
@@ -812,20 +815,84 @@ async function sendMessage(){
   if(error) toast("Erreur d'envoi : " + error.message);
 }
 
+/* ---------------- Actions sur un message : modifier / supprimer / télécharger ---------------- */
+function openMessageActions(msgId){
+  const m = messagesById[msgId];
+  if(!m || m.is_deleted) return;
+  const isMine = m.sender_id === me.id;
+  const isDownloadable = ['image','video','document'].includes(m.msg_type);
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Message</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        ${isMine && m.msg_type==='text' ? `<button class="btn ghost" style="margin-bottom:10px;" onclick="this.closest('.sheet').remove();openEditMessage('${msgId}')">✏️ Modifier</button>` : ''}
+        ${isDownloadable ? `<button class="btn ghost" style="margin-bottom:10px;" onclick="downloadMessageFile('${msgId}')">⬇️ Télécharger</button>` : ''}
+        <button class="btn ghost" style="margin-bottom:10px;" onclick="deleteMessageForMe('${msgId}')">🗑️ Supprimer pour moi</button>
+        ${isMine ? `<button class="btn" style="background:var(--danger);" onclick="deleteMessageForEveryone('${msgId}')">🗑️ Supprimer pour tous</button>` : ''}
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+function openEditMessage(msgId){
+  const m = messagesById[msgId];
+  if(!m) return;
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Modifier le message</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <textarea id="edit-msg-text" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;">${escapeHtml(m.content)}</textarea>
+        <button class="btn" style="margin-top:12px;" onclick="saveEditedMessage('${msgId}')">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function saveEditedMessage(msgId){
+  const newText = document.getElementById('edit-msg-text').value.trim();
+  if(!newText){ toast("Le message ne peut pas être vide."); return; }
+  const { error } = await sb.rpc('jmtchat_edit_message', { msg_id: msgId, new_content: newText });
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet').remove();
+  loadMessages();
+}
+async function deleteMessageForMe(msgId){
+  document.querySelector('.sheet').remove();
+  const { error } = await sb.rpc('jmtchat_delete_for_me', { msg_id: msgId });
+  if(error){ toast("Erreur : " + error.message); return; }
+  loadMessages();
+}
+async function deleteMessageForEveryone(msgId){
+  document.querySelector('.sheet').remove();
+  const { error } = await sb.rpc('jmtchat_delete_for_everyone', { msg_id: msgId });
+  if(error){ toast("Erreur : " + error.message); return; }
+  loadMessages();
+}
+function downloadMessageFile(msgId){
+  const m = messagesById[msgId];
+  if(!m) return;
+  try{
+    const data = JSON.parse(m.content);
+    const a = document.createElement('a');
+    a.href = data.url;
+    a.download = data.name || '';
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }catch(e){ toast("Impossible de télécharger ce fichier."); }
+}
+
 function subscribeRealtime(){
   if(msgChannel) sb.removeChannel(msgChannel);
   msgChannel = sb.channel('jmtchat-messages')
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_messages' }, payload => {
       const m = payload.new;
+      messagesById[m.id] = m;
       if(currentConv && m.conversation_id === currentConv.convId){
-        const box = document.getElementById('conv-messages');
-        const wasEmpty = box.querySelector('.empty-state');
-        if(wasEmpty) box.innerHTML='';
-        box.insertAdjacentHTML('beforeend', `
-          <div class="bubble ${m.sender_id===me.id?'mine':'theirs'}">
-            ${renderBubbleContent(m)}<span class="time">${fmtTime(m.created_at)}${(m.sender_id===me.id && currentConv.type==='user') ? ' '+ticksHtml(m.is_read) : ''}</span>
-          </div>`);
-        box.scrollTop = box.scrollHeight;
+        loadMessages();
         if(currentConv.type==='user' && m.receiver_id===me.id && !m.is_read){
           sb.from('jmtchat_messages').update({ is_read:true }).eq('id', m.id).then(()=>{});
         }
@@ -834,6 +901,7 @@ function subscribeRealtime(){
     })
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'jmtchat_messages' }, payload => {
       const m = payload.new;
+      messagesById[m.id] = m;
       if(currentConv && m.conversation_id === currentConv.convId && currentConv.type==='user'){
         loadMessages();
       }
@@ -980,21 +1048,31 @@ function lastMessagePreview(m){
 function callPlaceholder(type){ toast((type==='audio'?"📞 Appel audio":"🎥 Appel vidéo") + " : arrive dans une prochaine étape."); }
 
 /* ---------------- Actualité (statuts) ---------------- */
+let statusesById = {};
 async function loadStatuses(){
   const { data } = await sb.from('jmtchat_statuses')
     .select('*, jmtchat_profiles(profile_name, full_name, avatar_url)')
     .gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending:false });
+  statusesById = {};
+  (data||[]).forEach(s => statusesById[s.id] = s);
   const list = document.getElementById('status-list');
   if(!data || !data.length){ list.innerHTML = '<div class="empty-state">Aucun statut pour le moment.</div>'; return; }
   list.innerHTML = data.map(s => `
-    <div class="status-card" onclick='viewStatus(${JSON.stringify(s.content)}, "${(s.jmtchat_profiles?.profile_name||s.jmtchat_profiles?.full_name||"Utilisateur").replace(/"/g,'')}", "${s.bg_color}")'>
+    <div class="status-card" onclick="openViewStatus('${s.id}')">
       <img src="${s.jmtchat_profiles?.avatar_url || initialsAvatar('U')}">
       <div class="info">
         <div class="name">${s.jmtchat_profiles?.profile_name || s.jmtchat_profiles?.full_name || 'Utilisateur'}</div>
-        <div class="last">${fmtTime(s.created_at)}</div>
+        <div class="last">${statusPreview(s)} · ${fmtTime(s.created_at)}</div>
       </div>
+      ${s.profile_id===me.id ? '<div style="font-size:12px;color:var(--muted);">👁️ voir</div>' : ''}
     </div>`).join('');
+}
+function statusPreview(s){
+  if(s.status_type==='image') return '📷 Photo';
+  if(s.status_type==='video') return '🎬 Vidéo';
+  if(s.status_type==='voice') return '🎤 Vocal';
+  return 'Texte';
 }
 function openAddStatus(){
   const sheet = document.createElement('div');
@@ -1003,33 +1081,170 @@ function openAddStatus(){
     <div class="sheet-content">
       <div class="sheet-header"><h3>Ajouter un statut</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
       <div class="sheet-body">
-        <div class="field"><label>Votre texte</label><textarea id="status-text" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;"></textarea></div>
-        <div style="display:flex;gap:10px;margin:14px 0;">
-          <button class="icon-btn" style="font-size:24px;" onclick="toast('🎙️ Statut vocal : phase 2')">🎙️</button>
-          <button class="icon-btn" style="font-size:24px;" onclick="toast('🖼️ Statut photo : phase 2')">🖼️</button>
-          <button class="icon-btn" style="font-size:24px;" onclick="toast('🎬 Statut vidéo : phase 2')">🎬</button>
+        <div class="field"><label>Votre texte (optionnel si vous ajoutez un média)</label><textarea id="status-text" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;"></textarea></div>
+        <div style="display:flex;gap:14px;margin:14px 0;">
+          <div style="text-align:center;">
+            <button class="icon-btn" id="status-voice-btn" style="font-size:24px;" onclick="toggleStatusVoiceRecording()">🎙️</button>
+            <div style="font-size:11px;color:var(--muted);">Vocal</div>
+          </div>
+          <div style="text-align:center;">
+            <button class="icon-btn" style="font-size:24px;" onclick="pickStatusMedia('image')">🖼️</button>
+            <div style="font-size:11px;color:var(--muted);">Photo</div>
+          </div>
+          <div style="text-align:center;">
+            <button class="icon-btn" style="font-size:24px;" onclick="pickStatusMedia('video')">🎬</button>
+            <div style="font-size:11px;color:var(--muted);">Vidéo</div>
+          </div>
         </div>
+        <div id="status-media-preview"></div>
         <button class="btn" onclick="submitStatus()">Publier</button>
       </div>
     </div>`;
   document.body.appendChild(sheet);
 }
-async function submitStatus(){
-  const content = document.getElementById('status-text').value.trim();
-  if(!content){ toast("Écris quelque chose."); return; }
-  await sb.from('jmtchat_statuses').insert({ profile_id: me.id, status_type:'text', content, bg_color:'#0b1b3a' });
-  document.querySelector('.sheet').remove();
-  toast("Statut publié !");
-  loadStatuses();
+let statusMediaFile = null;
+let statusMediaType = null;
+function pickStatusMedia(type){
+  triggerFileInput(type==='image' ? 'image/*' : 'video/*', null, async(file)=>{
+    statusMediaFile = file;
+    statusMediaType = type;
+    const preview = document.getElementById('status-media-preview');
+    if(preview){
+      preview.innerHTML = type==='image'
+        ? `<img src="${URL.createObjectURL(file)}" style="max-width:100%;border-radius:10px;margin-bottom:10px;">`
+        : `<video src="${URL.createObjectURL(file)}" controls style="max-width:100%;border-radius:10px;margin-bottom:10px;"></video>`;
+    }
+  });
 }
-function viewStatus(content, name, bg){
+let statusMediaRecorder = null;
+let statusAudioChunks = [];
+let statusIsRecording = false;
+async function toggleStatusVoiceRecording(){
+  const btn = document.getElementById('status-voice-btn');
+  if(!statusIsRecording){
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      statusMediaRecorder = new MediaRecorder(stream);
+      statusAudioChunks = [];
+      statusMediaRecorder.ondataavailable = e => statusAudioChunks.push(e.data);
+      statusMediaRecorder.start();
+      statusIsRecording = true;
+      btn.textContent = '⏹️';
+      toast("Enregistrement du statut vocal...");
+    }catch(e){ toast("Micro non accessible : " + e.message); }
+  } else {
+    statusMediaRecorder.onstop = ()=>{
+      statusIsRecording = false;
+      btn.textContent = '🎙️';
+      const blob = new Blob(statusAudioChunks, { type:'audio/webm' });
+      statusMediaFile = new File([blob], `status_voice_${Date.now()}.webm`, { type:'audio/webm' });
+      statusMediaType = 'voice';
+      const preview = document.getElementById('status-media-preview');
+      if(preview) preview.innerHTML = `<audio src="${URL.createObjectURL(statusMediaFile)}" controls style="width:100%;margin-bottom:10px;"></audio>`;
+      statusMediaRecorder.stream.getTracks().forEach(t=>t.stop());
+    };
+    statusMediaRecorder.stop();
+  }
+}
+async function submitStatus(){
+  const text = document.getElementById('status-text').value.trim();
+  if(!statusMediaFile && !text){ toast("Écris quelque chose ou ajoute un média."); return; }
+  try{
+    if(statusMediaFile){
+      const url = await uploadToChat(statusMediaFile, 'statuses');
+      await sb.from('jmtchat_statuses').insert({
+        profile_id: me.id, status_type: statusMediaType,
+        content: JSON.stringify({ url, caption:text || null }), bg_color:'#0b1b3a'
+      });
+    } else {
+      await sb.from('jmtchat_statuses').insert({ profile_id: me.id, status_type:'text', content:text, bg_color:'#0b1b3a' });
+    }
+    document.querySelector('.sheet').remove();
+    statusMediaFile = null; statusMediaType = null;
+    toast("Statut publié !");
+    loadStatuses();
+  }catch(e){ toast("Erreur de publication : " + e.message); }
+}
+async function openViewStatus(statusId){
+  const s = statusesById[statusId];
+  if(!s) return;
+  const isMine = s.profile_id === me.id;
+  if(!isMine){
+    await sb.from('jmtchat_status_views').upsert({ status_id: statusId, viewer_id: me.id }, { onConflict:'status_id,viewer_id' });
+  }
+  let mediaHtml = '';
+  let caption = '';
+  if(s.status_type === 'text'){
+    mediaHtml = `<div style="font-size:22px;font-weight:600;text-align:center;padding:20px;">${escapeHtml(s.content)}</div>`;
+  } else {
+    let data = {};
+    try{ data = JSON.parse(s.content); }catch(e){}
+    caption = data.caption || '';
+    if(s.status_type==='image') mediaHtml = `<img src="${data.url}" style="max-width:100%;max-height:70vh;border-radius:10px;">`;
+    else if(s.status_type==='video') mediaHtml = `<video src="${data.url}" controls autoplay style="max-width:100%;max-height:70vh;border-radius:10px;"></video>`;
+    else if(s.status_type==='voice') mediaHtml = `<audio src="${data.url}" controls autoplay style="width:100%;"></audio>`;
+  }
+  const name = s.jmtchat_profiles?.profile_name || s.jmtchat_profiles?.full_name || (isMine ? (me.profile_name||me.full_name) : 'Utilisateur');
+  let viewersHtml = '';
+  if(isMine){
+    const { data: views } = await sb.from('jmtchat_status_views').select('*, jmtchat_profiles(profile_name, full_name, avatar_url)').eq('status_id', statusId);
+    viewersHtml = `
+      <div style="background:#fff;border-radius:14px;padding:14px;margin-top:16px;">
+        <div style="font-weight:700;margin-bottom:8px;">👁️ ${views?.length||0} vue(s)</div>
+        ${(views||[]).map(v => `
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 0;">
+            <img src="${v.jmtchat_profiles?.avatar_url || initialsAvatar('U')}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;">
+            <span style="font-size:13px;">${v.jmtchat_profiles?.profile_name || v.jmtchat_profiles?.full_name || 'Utilisateur'}</span>
+          </div>`).join('') || '<div style="font-size:12px;color:var(--muted);">Personne n\'a encore vu ce statut.</div>'}
+        <div style="display:flex;gap:10px;margin-top:12px;">
+          ${s.status_type==='text' ? `<button class="btn ghost" style="flex:1;" onclick="editStatus('${statusId}')">✏️ Modifier</button>` : ''}
+          <button class="btn" style="flex:1;background:var(--danger);" onclick="deleteStatus('${statusId}')">🗑️ Supprimer</button>
+        </div>
+      </div>`;
+  }
   const v = document.createElement('div');
   v.className='status-view';
-  v.style.background = bg || '#0b1b3a';
+  v.style.background = '#0b1b3a';
+  v.style.overflowY = 'auto';
   v.innerHTML = `
     <div class="sv-header"><span onclick="this.closest('.status-view').remove()" style="cursor:pointer;font-size:20px;">←</span><div>${name}</div></div>
-    <div class="sv-content">${content}</div>`;
+    <div class="sv-content" style="flex-direction:column;padding:16px;">
+      ${mediaHtml}
+      ${caption ? `<div style="margin-top:12px;font-size:15px;">${escapeHtml(caption)}</div>` : ''}
+      ${viewersHtml}
+    </div>`;
   document.body.appendChild(v);
+}
+function editStatus(statusId){
+  const s = statusesById[statusId];
+  document.querySelector('.status-view')?.remove();
+  const sheet = document.createElement('div');
+  sheet.className='sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Modifier le statut</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <textarea id="edit-status-text" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;">${escapeHtml(s.content)}</textarea>
+        <button class="btn" style="margin-top:12px;" onclick="saveEditedStatus('${statusId}')">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function saveEditedStatus(statusId){
+  const newText = document.getElementById('edit-status-text').value.trim();
+  if(!newText){ toast("Le statut ne peut pas être vide."); return; }
+  const { error } = await sb.from('jmtchat_statuses').update({ content:newText }).eq('id', statusId);
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet').remove();
+  toast("Statut modifié !");
+  loadStatuses();
+}
+async function deleteStatus(statusId){
+  const { error } = await sb.from('jmtchat_statuses').delete().eq('id', statusId);
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.status-view')?.remove();
+  toast("Statut supprimé.");
+  loadStatuses();
 }
 
 /* ---------------- Mon profil : modifier / supprimer ---------------- */
@@ -1358,14 +1573,40 @@ function subscribeCallChannel(){
     .on('broadcast', { event:'signal' }, ({ payload }) => handleCallSignal(payload))
     .subscribe();
 }
-function sendCallSignal(toId, payload){
+let outgoingCallChannel = null;
+let outgoingChannelReady = false;
+let outgoingChannelToId = null;
+let outgoingQueue = [];
+function ensureOutgoingChannel(toId){
+  if(outgoingCallChannel && outgoingChannelToId === toId) return;
+  if(outgoingCallChannel) sb.removeChannel(outgoingCallChannel);
+  outgoingChannelReady = false;
+  outgoingChannelToId = toId;
+  outgoingQueue = [];
   const ch = sb.channel(`call-${toId}`);
   ch.subscribe((status)=>{
     if(status === 'SUBSCRIBED'){
-      ch.send({ type:'broadcast', event:'signal', payload });
-      setTimeout(()=> sb.removeChannel(ch), 4000);
+      outgoingChannelReady = true;
+      outgoingQueue.forEach(p => ch.send({ type:'broadcast', event:'signal', payload:p }));
+      outgoingQueue = [];
     }
   });
+  outgoingCallChannel = ch;
+}
+function sendCallSignal(toId, payload){
+  ensureOutgoingChannel(toId);
+  if(outgoingChannelReady){
+    outgoingCallChannel.send({ type:'broadcast', event:'signal', payload });
+  } else {
+    outgoingQueue.push(payload);
+  }
+}
+let pendingCandidates = [];
+async function flushPendingCandidates(){
+  for(const c of pendingCandidates){
+    try{ await peerConnection.addIceCandidate(new RTCIceCandidate(c)); }catch(e){ console.warn(e); }
+  }
+  pendingCandidates = [];
 }
 function handleCallSignal(payload){
   if(payload.kind === 'offer'){
@@ -1376,6 +1617,7 @@ function handleCallSignal(payload){
     incomingOffer = payload;
     callType = payload.callType;
     currentCallPartner = { id: payload.from, name: payload.fromName, avatar: payload.fromAvatar };
+    pendingCandidates = [];
     document.getElementById('call-screen').classList.remove('hidden');
     document.getElementById('call-avatar').src = payload.fromAvatar || initialsAvatar(payload.fromName);
     document.getElementById('call-name').textContent = payload.fromName;
@@ -1387,7 +1629,11 @@ function handleCallSignal(payload){
   } else if(payload.kind === 'answer'){
     onRemoteAnswer(payload);
   } else if(payload.kind === 'candidate'){
-    onRemoteCandidate(payload);
+    if(peerConnection && peerConnection.remoteDescription && peerConnection.remoteDescription.type){
+      peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch(e=>console.warn(e));
+    } else {
+      pendingCandidates.push(payload.candidate);
+    }
   } else if(payload.kind === 'decline'){
     toast(payload.reason==='busy' ? "La personne est déjà en appel." : "Appel refusé.");
     closeCallScreen();
@@ -1401,6 +1647,7 @@ async function startCall(type){
   if(currentCallPartner){ toast("Un appel est déjà en cours."); return; }
   callType = type;
   callAnswered = false;
+  pendingCandidates = [];
   currentCallPartner = { id: currentConv.id, name: currentConv.name, avatar: currentConv.avatar };
   document.getElementById('call-screen').classList.remove('hidden');
   document.getElementById('call-avatar').src = currentCallPartner.avatar || initialsAvatar(currentCallPartner.name);
@@ -1417,6 +1664,12 @@ async function startCall(type){
     peerConnection.ontrack = (e)=>{ document.getElementById('remote-video').srcObject = e.streams[0]; };
     peerConnection.onicecandidate = (e)=>{
       if(e.candidate) sendCallSignal(currentCallPartner.id, { kind:'candidate', from:me.id, candidate:e.candidate });
+    };
+    peerConnection.oniceconnectionstatechange = ()=>{
+      if(peerConnection && peerConnection.iceConnectionState === 'failed'){
+        toast("La connexion a échoué. Réessayez, idéalement sur le même wifi.");
+        endCall();
+      }
     };
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
@@ -1444,7 +1697,14 @@ async function acceptCall(){
     peerConnection.onicecandidate = (e)=>{
       if(e.candidate) sendCallSignal(currentCallPartner.id, { kind:'candidate', from:me.id, candidate:e.candidate });
     };
+    peerConnection.oniceconnectionstatechange = ()=>{
+      if(peerConnection && peerConnection.iceConnectionState === 'failed'){
+        toast("La connexion a échoué. Réessayez, idéalement sur le même wifi.");
+        endCall();
+      }
+    };
     await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer.sdp));
+    await flushPendingCandidates();
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
     sendCallSignal(currentCallPartner.id, { kind:'answer', from:me.id, sdp:answer });
@@ -1468,14 +1728,14 @@ async function onRemoteAnswer(payload){
   callAnswered = true;
   clearTimeout(callRingTimeout);
   await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+  await flushPendingCandidates();
   document.getElementById('outgoing-actions').classList.add('hidden');
   document.getElementById('call-controls').classList.remove('hidden');
   document.getElementById('call-status').textContent = 'Connecté';
   startCallTimer();
 }
 async function onRemoteCandidate(payload){
-  if(!peerConnection) return;
-  try{ await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate)); }catch(e){ console.warn(e); }
+  // remplacé par la logique de file d'attente dans handleCallSignal
 }
 function endCall(){
   if(currentCallPartner) sendCallSignal(currentCallPartner.id, { kind:'end', from:me.id });
@@ -1485,6 +1745,8 @@ function closeCallScreen(){
   clearTimeout(callRingTimeout);
   if(peerConnection){ peerConnection.close(); peerConnection = null; }
   if(localStream){ localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  if(outgoingCallChannel){ sb.removeChannel(outgoingCallChannel); outgoingCallChannel = null; outgoingChannelReady = false; outgoingChannelToId = null; outgoingQueue = []; }
+  pendingCandidates = [];
   clearInterval(callTimer); callTimer = null; callSeconds = 0;
   document.getElementById('call-screen').classList.add('hidden');
   document.getElementById('remote-video').srcObject = null;
