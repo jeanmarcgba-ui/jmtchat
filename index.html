@@ -342,11 +342,11 @@
 
     <!-- TCHAT -->
     <div id="tab-tchat" class="tabpanel active">
-      <div class="welcome-banner" id="welcome-banner">
+      <div class="welcome-banner" id="welcome-banner" onclick="openMyProfile()" style="cursor:pointer;">
         <img id="my-avatar-small" src="">
         <div>
           <div class="name" id="my-name-display">—</div>
-          <div class="sub">Bienvenue sur JMTchat 👋</div>
+          <div class="sub">Bienvenue sur JMTchat 👋 · Touche ici pour modifier ton profil</div>
         </div>
       </div>
       <div class="section-title">Discussions</div>
@@ -758,6 +758,90 @@ function viewStatus(content, name, bg){
     <div class="sv-header"><span onclick="this.closest('.status-view').remove()" style="cursor:pointer;font-size:20px;">←</span><div>${name}</div></div>
     <div class="sv-content">${content}</div>`;
   document.body.appendChild(v);
+}
+
+/* ---------------- Mon profil : modifier / supprimer ---------------- */
+let editAvatarFile = null;
+function openMyProfile(){
+  if(me.is_creator) return; // pas de profil DB pour le créateur
+  editAvatarFile = null;
+  const sheet = document.createElement('div');
+  sheet.className='sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Mon profil</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <div class="avatar-picker" style="margin:0 auto 16px;">
+          <img id="edit-avatar-preview" src="${me.avatar_url || initialsAvatar(me.profile_name)}">
+          <div class="cam" onclick="document.getElementById('edit-avatar-file').click()">📷</div>
+          <input type="file" id="edit-avatar-file" accept="image/*" class="hidden" onchange="onEditAvatarChosen(event)">
+        </div>
+        <div class="field"><label>Nom de profil</label><input id="edit-profile-name" type="text" value="${(me.profile_name||'').replace(/"/g,'&quot;')}"></div>
+        <div class="field"><label>Numéro de téléphone</label><input type="text" value="${me.phone||''}" disabled></div>
+        <button class="btn" onclick="saveProfileEdits()">Enregistrer les modifications</button>
+        <button class="btn" style="background:var(--danger);margin-top:10px;" onclick="confirmDeleteAccount()">Supprimer mon compte</button>
+        <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.sheet').remove()">Annuler</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+function onEditAvatarChosen(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  editAvatarFile = file;
+  const reader = new FileReader();
+  reader.onload = ()=>{ document.getElementById('edit-avatar-preview').src = reader.result; };
+  reader.readAsDataURL(file);
+}
+async function saveProfileEdits(){
+  const newName = document.getElementById('edit-profile-name').value.trim();
+  if(!newName){ toast("Le nom de profil ne peut pas être vide."); return; }
+  let avatar_url = me.avatar_url;
+  if(editAvatarFile){
+    try{
+      const path = `avatars/${Date.now()}_${editAvatarFile.name}`;
+      const { error: upErr } = await sb.storage.from('jmtchat').upload(path, editAvatarFile, { upsert:true });
+      if(!upErr){
+        const { data:pub } = sb.storage.from('jmtchat').getPublicUrl(path);
+        avatar_url = pub.publicUrl;
+      } else {
+        toast("Erreur d'envoi de la photo : " + upErr.message);
+      }
+    }catch(e){ console.warn("Upload avatar échoué", e); }
+  }
+  const { data, error } = await sb.from('jmtchat_profiles').update({ profile_name:newName, avatar_url }).eq('id', me.id).select().single();
+  if(error){ toast("Erreur : " + error.message); return; }
+  me = data;
+  editAvatarFile = null;
+  const sheet = document.querySelector('.sheet');
+  if(sheet) sheet.remove();
+  refreshMyUI();
+  toast("Profil mis à jour !");
+}
+function refreshMyUI(){
+  document.getElementById('my-name-display').textContent = me.profile_name || me.full_name;
+  document.getElementById('my-avatar-small').src = me.avatar_url || initialsAvatar(me.profile_name);
+  document.getElementById('my-avatar-status').src = me.avatar_url || initialsAvatar(me.profile_name);
+}
+function confirmDeleteAccount(){
+  const sheet = document.querySelector('.sheet');
+  if(sheet) sheet.remove();
+  const overlay = document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.innerHTML = `
+    <div class="auth-card" style="max-width:340px;">
+      <h2>Supprimer le compte</h2>
+      <p class="tag">Cette action est définitive. Ton profil sera supprimé de JMTchat.</p>
+      <button class="btn" style="background:var(--danger);" onclick="deleteMyAccount()">Oui, supprimer</button>
+      <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+async function deleteMyAccount(){
+  const { error } = await sb.from('jmtchat_profiles').delete().eq('id', me.id);
+  if(error){ toast("Suppression impossible (souvent car tu es créateur d'un groupe) : " + error.message); return; }
+  clearSession();
+  location.reload();
 }
 
 /* ---------------- Groupes ---------------- */
