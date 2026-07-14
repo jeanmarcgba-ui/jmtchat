@@ -600,7 +600,18 @@ async function tryAutoLogin(){
   const sid = getSession();
   if(!sid) return false;
   const { data } = await sb.from('jmtchat_profiles').select('*').eq('id', sid).maybeSingle();
-  if(data){ me = data; enterApp(); return true; }
+  if(data){
+    me = data;
+    if(!me.auth_user_id){
+      const { data: { user } } = await sb.auth.getUser();
+      if(user){
+        await sb.from('jmtchat_profiles').update({ auth_user_id: user.id }).eq('id', me.id);
+        me.auth_user_id = user.id;
+      }
+    }
+    enterApp();
+    return true;
+  }
   return false;
 }
 
