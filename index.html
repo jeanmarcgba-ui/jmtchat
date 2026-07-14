@@ -181,7 +181,7 @@
     background:none;border:none;font-size:20px;cursor:pointer;color:var(--navy);padding:6px;
   }
   .conv-inputbar input{
-    flex:1;padding:10px 14px;border-radius:20px;border:1px solid #d0d5dd;font-size:14px;outline:none;
+    flex:1;min-width:0;padding:10px 14px;border-radius:20px;border:1px solid #d0d5dd;font-size:14px;outline:none;
   }
   .send-btn{
     background:var(--blue);color:#fff;border:none;width:38px;height:38px;border-radius:50%;
@@ -488,6 +488,17 @@ function ticksHtml(isRead){
   return `<span class="ticks ${isRead?'read':'unread'}">✓✓</span>`;
 }
 
+/* ---------------- Session sécurisée (invisible pour l'utilisateur) ---------------- */
+async function ensureAuthSession(){
+  try{
+    const { data: { session } } = await sb.auth.getSession();
+    if(!session){
+      const { error } = await sb.auth.signInAnonymously();
+      if(error) console.warn("Session sécurisée non créée :", error.message);
+    }
+  }catch(e){ console.warn("Erreur session sécurisée :", e); }
+}
+
 /* ---------------- Onboarding : étape 1 -> code ---------------- */
 function startVerification(){
   const full_name = document.getElementById('inp-fullname').value.trim();
@@ -516,6 +527,13 @@ async function verifyCode(){
   const { data: existing } = await sb.from('jmtchat_profiles').select('*').eq('phone', pendingSignup.phone).maybeSingle();
   if(existing){
     me = existing;
+    if(!existing.auth_user_id){
+      const { data: { user } } = await sb.auth.getUser();
+      if(user){
+        await sb.from('jmtchat_profiles').update({ auth_user_id: user.id }).eq('id', existing.id);
+        me.auth_user_id = user.id;
+      }
+    }
     saveSession(me.id);
     toast("Bienvenue à nouveau, " + (me.profile_name||me.full_name));
     enterApp();
@@ -556,13 +574,15 @@ async function finishProfile(){
     }catch(e){ console.warn("Upload avatar échoué, avatar par défaut utilisé.", e); }
   }
 
+  const { data: { user } } = await sb.auth.getUser();
   const { data, error } = await sb.from('jmtchat_profiles').insert({
     full_name: pendingSignup.full_name,
     phone: pendingSignup.phone,
     email: pendingSignup.email,
     profile_name,
     avatar_url,
-    is_online: true
+    is_online: true,
+    auth_user_id: user ? user.id : null
   }).select().single();
 
   if(error){ toast("Erreur : " + error.message); return; }
@@ -1102,6 +1122,7 @@ async function loadCreatorDashboard(){
 
 /* ---------------- Démarrage ---------------- */
 window.addEventListener('DOMContentLoaded', async ()=>{
+  await ensureAuthSession();
   const ok = await tryAutoLogin();
   if(!ok){
     document.getElementById('screen-onboarding').classList.add('active');
