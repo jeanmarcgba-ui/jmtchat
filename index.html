@@ -19,14 +19,17 @@
     --danger:#e6453b;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
+  html{height:100%;}
   body{
     font-family:'Segoe UI',Roboto,Arial,sans-serif;
     background:var(--bg);
     color:var(--text);
     height:100vh;
+    height:calc(var(--vh, 1vh) * 100);
+    height:100dvh;
     overflow:hidden;
   }
-  .screen{display:none;height:100vh;flex-direction:column;}
+  .screen{display:none;height:100vh;height:calc(var(--vh, 1vh) * 100);height:100dvh;flex-direction:column;}
   .screen.active{display:flex;}
   .hidden{display:none !important;}
 
@@ -440,6 +443,14 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const CREATOR_NAME = "Jean Marc";
 const CREATOR_PASS = "jeanmarcamp";
 
+/* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
+function setRealVH(){
+  document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+}
+setRealVH();
+window.addEventListener('resize', setRealVH);
+window.addEventListener('orientationchange', setRealVH);
+
 let me = null;           // profil courant {id, full_name, phone, email, profile_name, avatar_url, is_creator}
 let pendingSignup = {};  // données en cours d'inscription
 let currentConv = null;  // {type:'user'|'group', id, name, avatar}
@@ -694,6 +705,15 @@ function subscribeRealtime(){
           </div>`);
         box.scrollTop = box.scrollHeight;
       }
+    })
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_profiles' }, payload => {
+      if(payload.new.id !== me.id){ loadContacts(); toast(`${payload.new.profile_name || payload.new.full_name} a rejoint JMTchat !`); }
+    })
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'jmtchat_profiles' }, () => {
+      loadContacts();
+    })
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_statuses' }, () => {
+      if(document.getElementById('tab-actu').classList.contains('active')) loadStatuses();
     })
     .subscribe();
 }
