@@ -150,6 +150,13 @@
   .dot{width:10px;height:10px;border-radius:50%;background:#c0c5cc;flex-shrink:0;}
   .dot.online{background:#22c55e;}
   .section-title{padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+  .badge-unread{
+    background:#e6453b;color:#fff;font-size:11px;font-weight:800;min-width:20px;height:20px;
+    border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 6px;flex-shrink:0;
+  }
+  .ticks{font-weight:700;letter-spacing:-2px;margin-left:2px;}
+  .ticks.unread{color:#444d5c;}
+  .ticks.read{color:#7a1330;}
 
   .empty-state{padding:40px 20px;text-align:center;color:var(--muted);font-size:13.5px;}
 
@@ -472,6 +479,14 @@ function fmtTime(ts){
   const d = new Date(ts);
   return d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
 }
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
+}
+function ticksHtml(isRead){
+  return `<span class="ticks ${isRead?'read':'unread'}">✓✓</span>`;
+}
 
 /* ---------------- Onboarding : étape 1 -> code ---------------- */
 function startVerification(){
@@ -617,6 +632,10 @@ function switchTab(tab){
 async function loadContacts(){
   const { data } = await sb.from('jmtchat_profiles').select('*').neq('id', me.id).order('profile_name');
   allProfiles = data || [];
+  renderContactList();
+  await loadDiscussions();
+}
+function renderContactList(){
   const list = document.getElementById('contact-list');
   if(!allProfiles.length){ list.innerHTML = '<div class="empty-state">Personne d\'autre pour l\'instant. Partage JMTchat autour de toi !</div>'; return; }
   list.innerHTML = allProfiles.map(p => `
@@ -628,6 +647,35 @@ async function loadContacts(){
       </div>
       <div class="dot ${p.is_online?'online':''}"></div>
     </div>`).join('');
+}
+async function loadDiscussions(){
+  const { data: msgs } = await sb.from('jmtchat_messages').select('*')
+    .not('receiver_id', 'is', null)
+    .or(`sender_id.eq.${me.id},receiver_id.eq.${me.id}`)
+    .order('created_at', { ascending:false });
+  const map = {};
+  (msgs||[]).forEach(m=>{
+    const otherId = m.sender_id===me.id ? m.receiver_id : m.sender_id;
+    if(!map[otherId]) map[otherId] = { last:m, unread:0 };
+    if(m.receiver_id===me.id && !m.is_read) map[otherId].unread++;
+  });
+  const list = document.getElementById('conv-list');
+  const ids = Object.keys(map);
+  if(!ids.length){ list.innerHTML = '<div class="empty-state">Aucune conversation pour l\'instant.</div>'; return; }
+  list.innerHTML = ids.map(id => {
+    const p = allProfiles.find(x=>x.id===id);
+    if(!p) return '';
+    const info = map[id];
+    return `
+      <div class="list-item" onclick="openConversation('user','${id}')">
+        <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+        <div class="info">
+          <div class="name">${p.profile_name || p.full_name}</div>
+          <div class="last">${info.last.sender_id===me.id?'Vous : ':''}${escapeHtml(info.last.content||'')}</div>
+        </div>
+        ${info.unread>0 ? `<div class="badge-unread">${info.unread}</div>` : ''}
+      </div>`;
+  }).join('');
 }
 
 /* ---------------- Conversation privée / groupe ---------------- */
@@ -654,6 +702,10 @@ async function openConversation(type, id){
   document.getElementById('screen-app').classList.remove('active');
   document.getElementById('screen-conv').classList.add('active');
   await loadMessages();
+  if(type==='user'){
+    await sb.from('jmtchat_messages').update({ is_read:true }).eq('receiver_id', me.id).eq('sender_id', id).eq('is_read', false);
+    loadDiscussions();
+  }
 }
 function closeConversation(){
   document.getElementById('screen-conv').classList.remove('active');
@@ -671,8 +723,8 @@ function renderMessages(msgs){
   if(!msgs.length){ box.innerHTML = '<div class="empty-state" style="color:#5b6b82;">Aucun message. Dites bonjour 👋</div>'; return; }
   box.innerHTML = msgs.map(m => `
     <div class="bubble ${m.sender_id===me.id?'mine':'theirs'}">
-      ${m.content}
-      <span class="time">${fmtTime(m.created_at)}</span>
+      ${escapeHtml(m.content)}
+      <span class="time">${fmtTime(m.created_at)}${(m.sender_id===me.id && currentConv.type==='user') ? ' '+ticksHtml(m.is_read) : ''}</span>
     </div>`).join('');
   box.scrollTop = box.scrollHeight;
 }
@@ -684,6 +736,7 @@ async function sendMessage(){
   const { error } = await sb.from('jmtchat_messages').insert({
     conversation_id: currentConv.convId,
     sender_id: me.id,
+    receiver_id: currentConv.type==='user' ? currentConv.id : null,
     content,
     msg_type: 'text'
   });
@@ -701,10 +754,21 @@ function subscribeRealtime(){
         if(wasEmpty) box.innerHTML='';
         box.insertAdjacentHTML('beforeend', `
           <div class="bubble ${m.sender_id===me.id?'mine':'theirs'}">
-            ${m.content}<span class="time">${fmtTime(m.created_at)}</span>
+            ${escapeHtml(m.content)}<span class="time">${fmtTime(m.created_at)}${(m.sender_id===me.id && currentConv.type==='user') ? ' '+ticksHtml(m.is_read) : ''}</span>
           </div>`);
         box.scrollTop = box.scrollHeight;
+        if(currentConv.type==='user' && m.receiver_id===me.id && !m.is_read){
+          sb.from('jmtchat_messages').update({ is_read:true }).eq('id', m.id).then(()=>{});
+        }
       }
+      if(document.getElementById('tab-tchat')?.classList.contains('active')) loadDiscussions();
+    })
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'jmtchat_messages' }, payload => {
+      const m = payload.new;
+      if(currentConv && m.conversation_id === currentConv.convId && currentConv.type==='user'){
+        loadMessages();
+      }
+      if(document.getElementById('tab-tchat')?.classList.contains('active')) loadDiscussions();
     })
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_profiles' }, payload => {
       if(payload.new.id !== me.id){ loadContacts(); toast(`${payload.new.profile_name || payload.new.full_name} a rejoint JMTchat !`); }
