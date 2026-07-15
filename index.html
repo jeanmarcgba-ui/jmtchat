@@ -427,11 +427,7 @@
       <span id="conv-menu-btn" class="hidden" onclick="toggleGroupMenu()">⋮</span>
     </div>
   </div>
-  <div id="group-dropdown" class="dropdown hidden" style="position:fixed;top:52px;right:12px;">
-    <div class="item" onclick="openAddMembers()">Ajouter des membres</div>
-    <div class="item" onclick="openMembersList()">Voir tous les membres</div>
-    <div class="item" onclick="openPromoteAdmin()">Ajouter d'autres administrateurs</div>
-  </div>
+  <div id="group-dropdown" class="dropdown hidden" style="position:fixed;top:52px;right:12px;"></div>
   <div id="conv-messages" class="conv-messages"></div>
   <div class="conv-inputbar">
     <button class="icon-btn" onclick="toggleAttachMenu()">📎</button>
@@ -1430,12 +1426,25 @@ function openCreateGroup(){
     <div class="sheet-content">
       <div class="sheet-header"><h3>Créer un groupe</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
       <div class="sheet-body">
+        <div class="avatar-picker" style="margin:0 auto 16px;">
+          <img id="new-group-avatar-preview" src="${initialsAvatar('G')}">
+          <div class="cam" onclick="document.getElementById('new-group-avatar-file').click()">📷</div>
+          <input type="file" id="new-group-avatar-file" accept="image/*" class="hidden" onchange="onNewGroupAvatarChosen(event)">
+        </div>
         <div class="field"><label>Nom du groupe</label><input id="grp-name" type="text" placeholder="Ex: Famille GJM"></div>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">La photo du groupe pourra être ajoutée juste après (phase médias).</p>
         <button class="btn" onclick="createGroupStep2()">Suivant : ajouter des membres</button>
       </div>
     </div>`;
   document.body.appendChild(sheet);
+}
+let newGroupAvatarFile = null;
+function onNewGroupAvatarChosen(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  newGroupAvatarFile = file;
+  const reader = new FileReader();
+  reader.onload = ()=>{ document.getElementById('new-group-avatar-preview').src = reader.result; };
+  reader.readAsDataURL(file);
 }
 let newGroupSelectedMembers = [];
 function createGroupStep2(){
@@ -1465,18 +1474,65 @@ function toggleMember(id, checked){
   else newGroupSelectedMembers = newGroupSelectedMembers.filter(x=>x!==id);
 }
 async function finalizeGroup(name){
-  const { data: group, error } = await sb.from('jmtchat_groups').insert({ name, created_by: me.id }).select().single();
+  let avatar_url = null;
+  if(newGroupAvatarFile){
+    try{ avatar_url = await uploadToChat(newGroupAvatarFile, 'group-avatars'); }
+    catch(e){ console.warn("Upload avatar groupe échoué", e); }
+  }
+  const { data: group, error } = await sb.from('jmtchat_groups').insert({ name, created_by: me.id, avatar_url }).select().single();
   if(error){ toast("Erreur : " + error.message); return; }
   const rows = [{ group_id: group.id, profile_id: me.id, is_admin:true }, ...newGroupSelectedMembers.map(id => ({ group_id: group.id, profile_id:id, is_admin:false }))];
   await sb.from('jmtchat_group_members').insert(rows);
   document.querySelector('.sheet').remove();
+  newGroupAvatarFile = null;
   toast("Groupe créé !");
   await loadGroups();
   switchTab('groupe');
 }
-function toggleGroupMenu(){ document.getElementById('group-dropdown').classList.toggle('hidden'); }
+function toggleGroupMenu(){
+  const dd = document.getElementById('group-dropdown');
+  if(dd.classList.contains('hidden')){
+    const g = myGroups.find(x=>x.id===currentConv.id);
+    const isAdmin = g ? g.is_admin : false;
+    dd.innerHTML = `
+      <div class="item" onclick="openAddMembers()">Ajouter des membres</div>
+      <div class="item" onclick="openMembersList()">Voir tous les membres</div>
+      ${isAdmin ? `
+        <div class="item" onclick="openPromoteAdmin()">Ajouter d'autres administrateurs</div>
+        <div class="item" onclick="changeGroupAvatar()">Modifier la photo du groupe</div>
+        <div class="item" onclick="removeGroupAvatar()">Supprimer la photo du groupe</div>
+      ` : ''}`;
+    dd.classList.remove('hidden');
+  } else {
+    dd.classList.add('hidden');
+  }
+}
+function changeGroupAvatar(){
+  document.getElementById('group-dropdown').classList.add('hidden');
+  triggerFileInput('image/*', null, async(file)=>{
+    toast("Envoi de la photo du groupe...");
+    try{
+      const url = await uploadToChat(file, 'group-avatars');
+      const { error } = await sb.from('jmtchat_groups').update({ avatar_url:url }).eq('id', currentConv.id);
+      if(error){ toast("Erreur : " + error.message); return; }
+      document.getElementById('conv-avatar').src = url;
+      await loadGroups();
+      toast("Photo du groupe mise à jour !");
+    }catch(e){ toast("Erreur d'envoi de la photo."); }
+  });
+}
+async function removeGroupAvatar(){
+  document.getElementById('group-dropdown').classList.add('hidden');
+  const { error } = await sb.from('jmtchat_groups').update({ avatar_url:null }).eq('id', currentConv.id);
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.getElementById('conv-avatar').src = initialsAvatar(currentConv.name);
+  await loadGroups();
+  toast("Photo du groupe supprimée.");
+}
 async function openMembersList(){
   document.getElementById('group-dropdown').classList.add('hidden');
+  const g = myGroups.find(x=>x.id===currentConv.id);
+  const isAdmin = g ? g.is_admin : false;
   const { data } = await sb.from('jmtchat_group_members').select('*, jmtchat_profiles(*)').eq('group_id', currentConv.id);
   const sheet = document.createElement('div');
   sheet.className='sheet';
@@ -1487,14 +1543,22 @@ async function openMembersList(){
         ${data.map(m => `
           <div class="select-row" style="cursor:default;">
             <img src="${m.jmtchat_profiles.avatar_url || initialsAvatar(m.jmtchat_profiles.profile_name)}">
-            <div>
+            <div style="flex:1;">
               <div>${m.jmtchat_profiles.profile_name || m.jmtchat_profiles.full_name} ${m.is_admin?'<span style="font-size:10px;color:var(--blue);">· admin</span>':''}</div>
               <div style="font-size:11px;color:var(--muted);">${m.jmtchat_profiles.phone}</div>
             </div>
+            ${isAdmin && m.profile_id!==me.id ? `<button class="icon-btn" style="color:var(--danger);font-size:16px;" onclick="removeGroupMember('${m.id}','${m.jmtchat_profiles.profile_name||m.jmtchat_profiles.full_name}')">🗑️</button>` : ''}
           </div>`).join('')}
       </div>
     </div>`;
   document.body.appendChild(sheet);
+}
+async function removeGroupMember(memberRowId, name){
+  const { error } = await sb.from('jmtchat_group_members').delete().eq('id', memberRowId);
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet').remove();
+  toast(`${name} a été retiré(e) du groupe.`);
+  openMembersList();
 }
 async function openAddMembers(){
   document.getElementById('group-dropdown').classList.add('hidden');
