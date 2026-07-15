@@ -278,7 +278,7 @@
 <!-- ============ ONBOARDING ============ -->
 <div id="screen-onboarding" class="screen active">
   <div class="auth-card" id="card-step1">
-    <img src="logo.png" class="logo-big" alt="JMTchat">
+    <img src="logo.png" class="logo-big" alt="JMTchat" onclick="onLogoTap()" style="cursor:pointer;">
     <h2>Bienvenue sur JMTchat</h2>
     <p class="tag">Créez votre compte pour commencer à discuter</p>
     <div class="field">
@@ -294,7 +294,6 @@
       <input id="inp-email" type="email" placeholder="exemple@mail.com">
     </div>
     <button class="btn" onclick="startVerification()">Continuer</button>
-    <div class="creator-link" onclick="openCreatorModal()">GJM</div>
   </div>
 
   <div class="auth-card hidden" id="card-step2">
@@ -335,14 +334,10 @@
 <div id="creator-modal" class="modal-overlay hidden">
   <div class="auth-card" style="max-width:340px;">
     <h2>Espace créateur</h2>
-    <p class="tag">Accès réservé à l'administrateur GJM</p>
-    <div class="field">
-      <label>Nom</label>
-      <input id="creator-name" type="text" placeholder="Nom">
-    </div>
+    <p class="tag">Accès réservé au créateur de JMTchat</p>
     <div class="field">
       <label>Mot de passe</label>
-      <input id="creator-pass" type="password" placeholder="Mot de passe">
+      <input id="creator-pass" type="password" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')creatorLogin()">
     </div>
     <button class="btn gold" onclick="creatorLogin()">Se connecter</button>
     <button class="btn ghost" style="margin-top:10px;" onclick="closeCreatorModal()">Annuler</button>
@@ -414,10 +409,22 @@
 
     <!-- OPTION -->
     <div id="tab-option" class="tabpanel">
-      <div class="section-title">Verrouillage de l'application</div>
-      <div id="lock-settings-box" style="padding:16px;"></div>
+      <div id="lock-section">
+        <div class="section-title">Verrouillage de l'application</div>
+        <div id="lock-settings-box" style="padding:16px;"></div>
+      </div>
       <div class="section-title">À propos du créateur</div>
       <div id="creator-info-box" style="padding:16px;"></div>
+      <div id="broadcast-section" class="hidden">
+        <div class="section-title">Envoyer une notification à tous les utilisateurs</div>
+        <div style="padding:16px;">
+          <div style="background:#fff;border-radius:12px;padding:14px;">
+            <div class="field"><label>Titre</label><input id="broadcast-title" type="text" placeholder="Ex: Mise à jour disponible"></div>
+            <div class="field"><label>Message</label><textarea id="broadcast-body" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;" placeholder="Ton message..."></textarea></div>
+            <button class="btn gold" onclick="sendBroadcastNotification()">📢 Envoyer à tous</button>
+          </div>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -502,7 +509,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_pHXpIo64swgShZshjimQNw_Ju-LEAQ1";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
-const CREATOR_PASS = "jeanmarcamp";
+const CREATOR_PASS = "jeanmarcamp0320";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
@@ -581,6 +588,10 @@ async function verifyCode(){
   // Vérifie si le numéro existe déjà
   const { data: existing } = await sb.from('jmtchat_profiles').select('*').eq('phone', pendingSignup.phone).maybeSingle();
   if(existing){
+    if(existing.is_blocked){
+      toast("Ce compte a été bloqué par l'administrateur.");
+      return;
+    }
     me = existing;
     if(!existing.auth_user_id){
       const { data: { user } } = await sb.auth.getUser();
@@ -656,6 +667,11 @@ async function tryAutoLogin(){
   if(!sid) return false;
   const { data } = await sb.from('jmtchat_profiles').select('*').eq('id', sid).maybeSingle();
   if(data){
+    if(data.is_blocked){
+      toast("Ce compte a été bloqué par l'administrateur.");
+      clearSession();
+      return false;
+    }
     me = data;
     if(!me.auth_user_id){
       const { data: { user } } = await sb.auth.getUser();
@@ -671,17 +687,27 @@ async function tryAutoLogin(){
 }
 
 /* ---------------- Créateur ---------------- */
+let logoTapCount = 0;
+let logoTapTimer = null;
+function onLogoTap(){
+  logoTapCount++;
+  clearTimeout(logoTapTimer);
+  logoTapTimer = setTimeout(()=>{ logoTapCount = 0; }, 2000);
+  if(logoTapCount >= 10){
+    logoTapCount = 0;
+    openCreatorModal();
+  }
+}
 function openCreatorModal(){ document.getElementById('creator-modal').classList.remove('hidden'); }
 function closeCreatorModal(){ document.getElementById('creator-modal').classList.add('hidden'); }
 function creatorLogin(){
-  const n = document.getElementById('creator-name').value.trim();
   const p = document.getElementById('creator-pass').value;
-  if(n === CREATOR_NAME && p === CREATOR_PASS){
+  if(p === CREATOR_PASS){
     me = { id:'creator-local', full_name:CREATOR_NAME, profile_name:'Jean Marc (Créateur)', avatar_url: initialsAvatar('GJM'), is_creator:true };
     closeCreatorModal();
     enterApp();
   } else {
-    toast("Nom ou mot de passe incorrect.");
+    toast("Mot de passe incorrect.");
   }
 }
 
@@ -699,6 +725,9 @@ async function enterApp(){
     document.getElementById('creator-badge-top').innerHTML = '<span class="badge-creator">CRÉATEUR</span>';
   }
   if(!me.is_creator){
+    const newCount = (me.login_count||0) + 1;
+    sb.from('jmtchat_profiles').update({ last_seen: new Date().toISOString(), login_count:newCount, is_online:true }).eq('id', me.id).then(()=>{});
+    me.login_count = newCount;
     await loadContacts();
     await loadStatuses();
     await loadGroups();
@@ -719,7 +748,12 @@ function switchTab(tab){
   document.getElementById('tab-title').textContent = titles[tab];
   if(tab==='journal') loadCallLog();
   if(tab==='repertoire') loadDirectory();
-  if(tab==='option'){ renderLockSettings(); loadCreatorInfo(); }
+  if(tab==='option'){
+    document.getElementById('lock-section').classList.toggle('hidden', me.is_creator);
+    document.getElementById('broadcast-section').classList.toggle('hidden', !me.is_creator);
+    if(!me.is_creator) renderLockSettings();
+    loadCreatorInfo();
+  }
 }
 
 /* ---------------- Voir le profil d'un utilisateur / visionner une photo ---------------- */
@@ -2016,8 +2050,8 @@ function renderCreatorInfo(info){
         <div class="field"><label>Nom</label><input id="creator-name-input" type="text" value="${(info.creator_name||'').replace(/"/g,'&quot;')}"></div>
         <div class="field"><label>Téléphone</label><input id="creator-phone-input" type="text" value="${(info.creator_phone||'').replace(/"/g,'&quot;')}"></div>
         <div class="field"><label>Email</label><input id="creator-email-input" type="text" value="${(info.creator_email||'').replace(/"/g,'&quot;')}"></div>
-        <div class="field"><label>Description</label><textarea id="creator-bio-input" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;">${escapeHtml(info.creator_bio||'')}</textarea></div>
-        <button class="btn gold" onclick="saveCreatorInfo()">Enregistrer</button>
+        <div class="field"><label>Description de l'application</label><textarea id="creator-bio-input" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;">${escapeHtml(info.creator_bio||'')}</textarea></div>
+        <button class="btn gold" onclick="saveCreatorInfo()">📢 Publier</button>
       </div>`;
   } else {
     box.innerHTML = `
@@ -2057,7 +2091,7 @@ async function saveCreatorInfo(){
   const { error } = await sb.from('jmtchat_app_settings').upsert(payload);
   if(error){ toast("Erreur : " + error.message); return; }
   creatorPhotoFile = null;
-  toast("Informations mises à jour !");
+  toast("Informations publiées ! Visibles chez tous les utilisateurs.");
   loadCreatorInfo();
 }
 
@@ -2473,11 +2507,13 @@ function startCallTo(userId, type){
   startCall(type);
 }
 
-/* ---------------- Espace créateur (mini dashboard) ---------------- */
+/* ---------------- Espace créateur (dashboard) ---------------- */
+let creatorProfilesCache = [];
 async function loadCreatorDashboard(){
   document.getElementById('tab-title').textContent = 'Espace créateur';
   const { data: profiles } = await sb.from('jmtchat_profiles').select('*').order('created_at', {ascending:false});
   const { data: groups } = await sb.from('jmtchat_groups').select('*');
+  creatorProfilesCache = profiles || [];
   const list = document.getElementById('contact-list');
   document.getElementById('conv-list').innerHTML = `
     <div style="padding:16px;">
@@ -2492,15 +2528,70 @@ async function loadCreatorDashboard(){
         </div>
       </div>
     </div>`;
-  list.innerHTML = '<div class="section-title">Tous les utilisateurs</div>' + (profiles||[]).map(p => `
-    <div class="list-item">
+  list.innerHTML = `<div class="section-title">Tous les utilisateurs (${profiles?.length||0})</div>` + (profiles||[]).map(p => `
+    <div class="list-item" onclick="openCreatorUserProfile('${p.id}')">
       <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
       <div class="info">
-        <div class="name">${p.profile_name || p.full_name}</div>
+        <div class="name">${p.profile_name || p.full_name} ${p.is_blocked?'<span style="color:var(--danger);font-size:11px;">· bloqué</span>':''}</div>
         <div class="last">${p.phone} ${p.email?('· '+p.email):''}</div>
       </div>
     </div>`).join('');
-  document.querySelectorAll('.bottom-nav button').forEach(b=>{ if(b.dataset.tab!=='tchat') b.style.display='none'; });
+  document.querySelectorAll('.bottom-nav button').forEach(b=>{
+    b.style.display = (b.dataset.tab==='tchat' || b.dataset.tab==='option') ? '' : 'none';
+  });
+}
+function openCreatorUserProfile(profileId){
+  const p = creatorProfilesCache.find(x => x.id === profileId);
+  if(!p) return;
+  const lastSeen = p.last_seen ? new Date(p.last_seen).toLocaleString('fr-FR') : 'Jamais';
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Profil utilisateur</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body" style="text-align:center;">
+        <img src="${p.avatar_url || initialsAvatar(p.profile_name)}" style="width:100px;height:100px;border-radius:50%;object-fit:cover;border:3px solid var(--gold);">
+        <div style="font-size:18px;font-weight:700;margin-top:12px;">${p.profile_name || p.full_name}</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:4px;">${p.phone}</div>
+        ${p.email ? `<div style="font-size:13px;color:var(--muted);">${p.email}</div>` : ''}
+        <div style="text-align:left;background:#f7f9fc;border-radius:12px;padding:12px;margin-top:16px;font-size:13px;">
+          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Statut</span><span>${p.is_online?'🟢 En ligne':'Hors ligne'}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Dernière connexion</span><span>${lastSeen}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Nombre de connexions</span><span>${p.login_count||0}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Inscrit le</span><span>${new Date(p.created_at).toLocaleDateString('fr-FR')}</span></div>
+        </div>
+        <button class="btn" style="margin-top:16px;background:${p.is_blocked?'#22c55e':'var(--danger)'};" onclick="toggleBlockUser('${p.id}', ${!p.is_blocked})">
+          ${p.is_blocked ? '✅ Débloquer cet utilisateur' : '🚫 Bloquer cet utilisateur'}
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function toggleBlockUser(profileId, blocked){
+  const { error } = await sb.rpc('jmtchat_creator_set_blocked', { target_id: profileId, blocked, pwd: CREATOR_PASS });
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet')?.remove();
+  toast(blocked ? "Utilisateur bloqué." : "Utilisateur débloqué.");
+  loadCreatorDashboard();
+}
+async function sendBroadcastNotification(){
+  const title = document.getElementById('broadcast-title').value.trim();
+  const body = document.getElementById('broadcast-body').value.trim();
+  if(!title && !body){ toast("Écris un titre ou un message."); return; }
+  try{
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-broadcast-notification`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${SUPABASE_ANON_KEY}`, 'apikey':SUPABASE_ANON_KEY },
+      body: JSON.stringify({ title, body })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Erreur serveur');
+    toast(`Notification envoyée à ${data.sent||0} appareil(s) !`);
+    document.getElementById('broadcast-title').value = '';
+    document.getElementById('broadcast-body').value = '';
+  }catch(e){
+    toast("Erreur d'envoi : " + e.message);
+  }
 }
 
 /* ---------------- Démarrage ---------------- */
