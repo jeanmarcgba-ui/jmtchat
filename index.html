@@ -280,9 +280,9 @@
   <div class="auth-card" id="card-step1">
     <img src="logo.png" class="logo-big" alt="JMTchat"
       onmousedown="onLogoPressStart()" onmouseup="onLogoPressEnd()" onmouseleave="onLogoPressEnd()"
-      ontouchstart="onLogoPressStart()" ontouchend="onLogoPressEnd()" ontouchcancel="onLogoPressEnd()"
-      oncontextmenu="return false;"
-      style="cursor:pointer;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;">
+      ontouchstart="event.preventDefault();onLogoPressStart()" ontouchend="onLogoPressEnd()" ontouchcancel="onLogoPressEnd()"
+      oncontextmenu="return false;" draggable="false"
+      style="cursor:pointer;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:none;">
     <h2>Bienvenue sur JMTchat</h2>
     <p class="tag">Créez votre compte pour commencer à discuter</p>
     <div class="field">
@@ -695,6 +695,7 @@ let logoPressTimer = null;
 function onLogoPressStart(){
   logoPressTimer = setTimeout(()=>{
     logoPressTimer = null;
+    if(navigator.vibrate) navigator.vibrate(200);
     openCreatorModal();
   }, 10000);
 }
