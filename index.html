@@ -405,6 +405,13 @@
       <div id="call-list"><div class="empty-state">Aucun appel pour le moment.</div></div>
     </div>
 
+    <!-- REPERTOIRE -->
+    <div id="tab-repertoire" class="tabpanel" style="position:relative;">
+      <div class="section-title">Mon répertoire</div>
+      <div id="directory-list"><div class="empty-state">Ton répertoire est vide.<br>Touche + pour ajouter un contact.</div></div>
+      <button class="fab gold" onclick="openAddToDirectory()">+</button>
+    </div>
+
   </div>
 
   <div class="bottom-nav">
@@ -412,6 +419,7 @@
     <button data-tab="actu" onclick="switchTab('actu')"><span class="ic">📰</span>Actualité</button>
     <button data-tab="groupe" onclick="switchTab('groupe')"><span class="ic">👥</span>Groupe</button>
     <button data-tab="journal" onclick="switchTab('journal')"><span class="ic">📞</span>Journal d'appel</button>
+    <button data-tab="repertoire" onclick="switchTab('repertoire')"><span class="ic">📇</span>Répertoire</button>
   </div>
 </div>
 
@@ -695,9 +703,10 @@ function switchTab(tab){
   document.querySelectorAll('.bottom-nav button').forEach(b=>b.classList.remove('active'));
   document.getElementById('tab-'+tab).classList.add('active');
   document.querySelector(`.bottom-nav button[data-tab="${tab}"]`).classList.add('active');
-  const titles = {tchat:'JMTchat', actu:'Actualité', groupe:'Groupes', journal:"Journal d'appel"};
+  const titles = {tchat:'JMTchat', actu:'Actualité', groupe:'Groupes', journal:"Journal d'appel", repertoire:"Mon répertoire"};
   document.getElementById('tab-title').textContent = titles[tab];
   if(tab==='journal') loadCallLog();
+  if(tab==='repertoire') loadDirectory();
 }
 
 /* ---------------- Voir le profil d'un utilisateur / visionner une photo ---------------- */
@@ -983,6 +992,9 @@ function subscribeRealtime(){
     })
     .on('postgres_changes', { event:'DELETE', schema:'public', table:'jmtchat_group_members' }, () => {
       loadGroups();
+    })
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'jmtchat_directory' }, () => {
+      if(document.getElementById('tab-repertoire')?.classList.contains('active')) loadDirectory();
     })
     .subscribe();
 }
@@ -1784,6 +1796,117 @@ async function loadCallLog(){
         <button class="icon-btn" style="color:var(--danger);font-size:16px;" onclick="event.stopPropagation();deleteCallLogEntry('${c.id}')">🗑️</button>
       </div>`;
   }).join('');
+}
+
+/* ---------------- Répertoire personnel ---------------- */
+let directoryEntries = [];
+async function loadDirectory(){
+  const { data } = await sb.from('jmtchat_directory').select('*').eq('owner_id', me.id).order('contact_name');
+  directoryEntries = data || [];
+  renderDirectory();
+}
+function renderDirectory(){
+  const list = document.getElementById('directory-list');
+  if(!directoryEntries.length){ list.innerHTML = '<div class="empty-state">Ton répertoire est vide.<br>Touche + pour ajouter un contact.</div>'; return; }
+  list.innerHTML = directoryEntries.map(entry => {
+    const p = entry.contact_profile_id ? allProfiles.find(x => x.id === entry.contact_profile_id) : null;
+    const name = p ? (p.profile_name || p.full_name) : entry.contact_name;
+    const avatar = p ? (p.avatar_url || initialsAvatar(name)) : initialsAvatar(name);
+    const statusLabel = p ? (p.is_online ? 'En ligne · sur JMTchat' : 'Sur JMTchat') : "N'a pas encore JMTchat";
+    return `
+      <div class="list-item" onclick="${p ? `openConversation('user','${p.id}')` : `toast("Cette personne n'a pas encore rejoint JMTchat.")`}">
+        <img class="avatar" src="${avatar}" onclick="event.stopPropagation();${p ? `openUserProfile('${p.id}')` : ''}">
+        <div class="info">
+          <div class="name">${name}</div>
+          <div class="last">${statusLabel} · ${entry.contact_phone}</div>
+        </div>
+        <button class="icon-btn" style="color:var(--danger);font-size:16px;" onclick="event.stopPropagation();removeDirectoryEntry('${entry.id}')">🗑️</button>
+      </div>`;
+  }).join('');
+}
+function openAddToDirectory(){
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content" style="max-height:85vh;">
+      <div class="sheet-header"><h3>Ajouter un contact</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <div class="field">
+          <label>Rechercher parmi les utilisateurs JMTchat</label>
+          <input id="directory-search-input" type="text" placeholder="Nom ou numéro..." oninput="searchDirectoryCandidates()">
+        </div>
+        <div id="directory-search-results" style="margin-top:8px;"></div>
+        <div style="border-top:1px solid #eef0f3;margin:18px 0 14px;padding-top:14px;">
+          <button class="btn ghost" onclick="showManualDirectoryForm()">➕ Inscrire un contact qui n'a pas encore JMTchat</button>
+        </div>
+        <div id="manual-directory-form" class="hidden">
+          <div class="field"><label>Nom et prénom</label><input id="manual-contact-name" type="text" placeholder="Ex: Awa Koffi"></div>
+          <div class="field"><label>Numéro de téléphone</label><input id="manual-contact-phone" type="tel" placeholder="+225 07 00 00 00 00"></div>
+          <button class="btn" onclick="submitManualDirectoryContact()">Valider</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+  searchDirectoryCandidates();
+}
+function showManualDirectoryForm(){
+  document.getElementById('manual-directory-form').classList.remove('hidden');
+}
+function searchDirectoryCandidates(){
+  const q = (document.getElementById('directory-search-input')?.value || '').trim().toLowerCase();
+  const existingIds = directoryEntries.map(e => e.contact_profile_id).filter(Boolean);
+  let results = allProfiles.filter(p => !existingIds.includes(p.id));
+  if(q){
+    results = results.filter(p =>
+      (p.profile_name||'').toLowerCase().includes(q) ||
+      (p.full_name||'').toLowerCase().includes(q) ||
+      (p.phone||'').toLowerCase().includes(q)
+    );
+  }
+  const box = document.getElementById('directory-search-results');
+  if(!results.length){ box.innerHTML = `<p style="color:var(--muted);font-size:13px;">Aucun utilisateur trouvé.</p>`; return; }
+  box.innerHTML = results.slice(0,25).map(p => `
+    <div class="select-row" style="cursor:default;">
+      <img src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+      <div style="flex:1;">
+        <div>${p.profile_name || p.full_name}</div>
+        <div style="font-size:11px;color:var(--muted);">${p.phone}</div>
+      </div>
+      <button class="btn gold" style="width:auto;padding:8px 12px;font-size:12px;" onclick="insertUserToDirectory('${p.id}')">Insérer</button>
+    </div>`).join('');
+}
+async function insertUserToDirectory(profileId){
+  const p = allProfiles.find(x => x.id === profileId);
+  if(!p) return;
+  const { error } = await sb.from('jmtchat_directory').insert({
+    owner_id: me.id, contact_profile_id: p.id, contact_name: p.profile_name || p.full_name, contact_phone: p.phone
+  });
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet')?.remove();
+  toast(`${p.profile_name || p.full_name} ajouté(e) à ton répertoire !`);
+  loadDirectory();
+}
+async function submitManualDirectoryContact(){
+  const name = document.getElementById('manual-contact-name').value.trim();
+  const phone = document.getElementById('manual-contact-phone').value.trim();
+  if(!name || !phone){ toast("Renseigne le nom et le numéro."); return; }
+  const existingProfile = allProfiles.find(p => p.phone === phone);
+  const { error } = await sb.from('jmtchat_directory').insert({
+    owner_id: me.id,
+    contact_profile_id: existingProfile ? existingProfile.id : null,
+    contact_name: name,
+    contact_phone: phone
+  });
+  if(error){ toast("Erreur : " + (error.message.includes('duplicate') ? "Ce numéro est déjà dans ton répertoire." : error.message)); return; }
+  document.querySelector('.sheet')?.remove();
+  toast(`${name} ajouté(e) à ton répertoire !`);
+  loadDirectory();
+}
+async function removeDirectoryEntry(entryId){
+  const { error } = await sb.from('jmtchat_directory').delete().eq('id', entryId);
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Contact retiré du répertoire.");
+  loadDirectory();
 }
 
 /* ---------------- Appels audio/vidéo (WebRTC) ---------------- */
