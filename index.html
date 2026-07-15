@@ -166,6 +166,16 @@
     width:58px;height:58px;border-radius:50%;border:none;font-size:22px;
     background:rgba(255,255,255,.18);color:#fff;cursor:pointer;
   }
+  /* Espace créateur : champs et liste en beige/noir foncé */
+  #creator-info-box input, #creator-info-box textarea,
+  #broadcast-section input, #broadcast-section textarea{
+    background:#4b4030 !important;border:2px solid #1a1a1a !important;color:#fff !important;
+  }
+  #creator-info-box input::placeholder, #creator-info-box textarea::placeholder,
+  #broadcast-section input::placeholder, #broadcast-section textarea::placeholder{color:#d8cfb8;}
+  #creator-info-box label, #broadcast-section label{color:#4b4030;}
+  .creator-list-item{background:#4b4030 !important;border-bottom:2px solid #1a1a1a !important;}
+  .creator-list-item .name, .creator-list-item .last{color:#f2ece0 !important;}
 
   .empty-state{padding:40px 20px;text-align:center;color:var(--muted);font-size:13.5px;}
 
@@ -348,8 +358,11 @@
 <!-- ============ APP PRINCIPALE ============ -->
 <div id="screen-app" class="screen">
   <div class="topbar">
-    <img src="logo.png" class="logo" alt="JMTchat">
-    <span id="topbar-gjm" onclick="openCreatorModal()" style="font-size:10px;color:rgba(255,255,255,.55);letter-spacing:1px;cursor:pointer;margin-left:4px;">GJM</span>
+    <span id="topbar-back" class="hidden" onclick="exitCreatorMode()" style="cursor:pointer;font-size:20px;margin-right:2px;">←</span>
+    <div style="display:flex;flex-direction:column;align-items:center;line-height:1;">
+      <img src="logo.png" class="logo" alt="JMTchat">
+      <span id="topbar-gjm" onclick="openCreatorModal()" style="font-size:8px;color:rgba(255,255,255,.55);letter-spacing:1px;cursor:pointer;margin-top:2px;">GJM</span>
+    </div>
     <h1 id="tab-title">JMTchat</h1>
     <span class="sub" id="creator-badge-top"></span>
   </div>
@@ -691,15 +704,23 @@ async function tryAutoLogin(){
 /* ---------------- Créateur ---------------- */
 function openCreatorModal(){ document.getElementById('creator-modal').classList.remove('hidden'); }
 function closeCreatorModal(){ document.getElementById('creator-modal').classList.add('hidden'); }
+let previousProfile = null;
 function creatorLogin(){
   const p = document.getElementById('creator-pass').value;
   if(p === CREATOR_PASS){
+    if(me && !me.is_creator){ previousProfile = me; }
     me = { id:'creator-local', full_name:CREATOR_NAME, profile_name:'Jean Marc (Créateur)', avatar_url: initialsAvatar('GJM'), is_creator:true };
     closeCreatorModal();
     enterApp();
   } else {
     toast("Mot de passe incorrect.");
   }
+}
+function exitCreatorMode(){
+  if(!previousProfile) return;
+  me = previousProfile;
+  previousProfile = null;
+  enterApp();
 }
 
 /* ---------------- Entrée dans l'app ---------------- */
@@ -709,13 +730,13 @@ async function enterApp(){
     await requireUnlock();
   }
   document.getElementById('screen-app').classList.add('active');
+  document.querySelectorAll('.bottom-nav button').forEach(b => b.style.display = '');
   document.getElementById('my-name-display').textContent = me.profile_name || me.full_name;
   document.getElementById('my-avatar-small').src = me.avatar_url || initialsAvatar(me.profile_name);
   document.getElementById('my-avatar-status').src = me.avatar_url || initialsAvatar(me.profile_name);
-  if(me.is_creator){
-    document.getElementById('creator-badge-top').innerHTML = '<span class="badge-creator">CRÉATEUR</span>';
-    document.getElementById('topbar-gjm').style.display = 'none';
-  }
+  document.getElementById('topbar-back').classList.toggle('hidden', !(me.is_creator && previousProfile));
+  document.getElementById('topbar-gjm').style.display = me.is_creator ? 'none' : '';
+  document.getElementById('creator-badge-top').innerHTML = me.is_creator ? '<span class="badge-creator">CRÉATEUR</span>' : '';
   if(!me.is_creator){
     const newCount = (me.login_count||0) + 1;
     sb.from('jmtchat_profiles').update({ last_seen: new Date().toISOString(), login_count:newCount, is_online:true }).eq('id', me.id).then(()=>{});
@@ -726,6 +747,7 @@ async function enterApp(){
     subscribeRealtime();
     subscribeCallChannel();
     checkPushBanner();
+    switchTab('tchat');
   } else {
     await loadCreatorDashboard();
   }
@@ -2035,7 +2057,7 @@ function renderCreatorInfo(info){
     box.innerHTML = `
       <div style="background:#fff;border-radius:12px;padding:14px;">
         <div class="avatar-picker" style="margin:0 auto 14px;">
-          <img id="creator-photo-preview" src="${info.creator_photo_url || initialsAvatar('GJM')}">
+          <img id="creator-photo-preview" src="${info.creator_photo_url || initialsAvatar('GJM')}" onclick="openCreatorPhotoActions()" style="cursor:pointer;">
           <div class="cam" onclick="document.getElementById('creator-photo-file').click()">📷</div>
           <input type="file" id="creator-photo-file" accept="image/*" class="hidden" onchange="onCreatorPhotoChosen(event)">
         </div>
@@ -2057,6 +2079,26 @@ function renderCreatorInfo(info){
   }
 }
 let creatorPhotoFile = null;
+function openCreatorPhotoActions(){
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Photo du créateur</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <button class="btn ghost" style="margin-bottom:10px;" onclick="this.closest('.sheet').remove();document.getElementById('creator-photo-file').click()">✏️ Modifier la photo</button>
+        <button class="btn" style="background:var(--danger);" onclick="deleteCreatorPhoto()">🗑️ Supprimer la photo</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function deleteCreatorPhoto(){
+  document.querySelector('.sheet')?.remove();
+  const { error } = await sb.from('jmtchat_app_settings').update({ creator_photo_url:null }).eq('id', 1);
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Photo supprimée.");
+  loadCreatorInfo();
+}
 function onCreatorPhotoChosen(e){
   const file = e.target.files[0];
   if(!file) return;
@@ -2521,7 +2563,7 @@ async function loadCreatorDashboard(){
       </div>
     </div>`;
   list.innerHTML = `<div class="section-title">Tous les utilisateurs (${profiles?.length||0})</div>` + (profiles||[]).map(p => `
-    <div class="list-item" onclick="openCreatorUserProfile('${p.id}')">
+    <div class="list-item creator-list-item" onclick="openCreatorUserProfile('${p.id}')">
       <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
       <div class="info">
         <div class="name">${p.profile_name || p.full_name} ${p.is_blocked?'<span style="color:var(--danger);font-size:11px;">· bloqué</span>':''}</div>
