@@ -278,7 +278,11 @@
 <!-- ============ ONBOARDING ============ -->
 <div id="screen-onboarding" class="screen active">
   <div class="auth-card" id="card-step1">
-    <img src="logo.png" class="logo-big" alt="JMTchat" onclick="onLogoTap()" style="cursor:pointer;">
+    <img src="logo.png" class="logo-big" alt="JMTchat"
+      onmousedown="onLogoPressStart()" onmouseup="onLogoPressEnd()" onmouseleave="onLogoPressEnd()"
+      ontouchstart="onLogoPressStart()" ontouchend="onLogoPressEnd()" ontouchcancel="onLogoPressEnd()"
+      oncontextmenu="return false;"
+      style="cursor:pointer;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;">
     <h2>Bienvenue sur JMTchat</h2>
     <p class="tag">Créez votre compte pour commencer à discuter</p>
     <div class="field">
@@ -687,16 +691,15 @@ async function tryAutoLogin(){
 }
 
 /* ---------------- Créateur ---------------- */
-let logoTapCount = 0;
-let logoTapTimer = null;
-function onLogoTap(){
-  logoTapCount++;
-  clearTimeout(logoTapTimer);
-  logoTapTimer = setTimeout(()=>{ logoTapCount = 0; }, 2000);
-  if(logoTapCount >= 10){
-    logoTapCount = 0;
+let logoPressTimer = null;
+function onLogoPressStart(){
+  logoPressTimer = setTimeout(()=>{
+    logoPressTimer = null;
     openCreatorModal();
-  }
+  }, 10000);
+}
+function onLogoPressEnd(){
+  if(logoPressTimer){ clearTimeout(logoPressTimer); logoPressTimer = null; }
 }
 function openCreatorModal(){ document.getElementById('creator-modal').classList.remove('hidden'); }
 function closeCreatorModal(){ document.getElementById('creator-modal').classList.add('hidden'); }
