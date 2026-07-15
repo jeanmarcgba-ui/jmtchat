@@ -524,7 +524,6 @@ const SUPABASE_ANON_KEY = "sb_publishable_pHXpIo64swgShZshjimQNw_Ju-LEAQ1";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
-const CREATOR_PASS = "jeanmarcamp0320";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
@@ -705,9 +704,13 @@ async function tryAutoLogin(){
 function openCreatorModal(){ document.getElementById('creator-modal').classList.remove('hidden'); }
 function closeCreatorModal(){ document.getElementById('creator-modal').classList.add('hidden'); }
 let previousProfile = null;
-function creatorLogin(){
+let creatorSessionPassword = null;
+async function creatorLogin(){
   const p = document.getElementById('creator-pass').value;
-  if(p === CREATOR_PASS){
+  const { data: valid, error } = await sb.rpc('jmtchat_creator_verify_password', { pwd: p });
+  if(error){ toast("Erreur : " + error.message); return; }
+  if(valid){
+    creatorSessionPassword = p;
     if(me && !me.is_creator){ previousProfile = me; }
     me = { id:'creator-local', full_name:CREATOR_NAME, profile_name:'Jean Marc (Créateur)', avatar_url: initialsAvatar('GJM'), is_creator:true };
     closeCreatorModal();
@@ -2046,6 +2049,19 @@ async function disableAppLock(){
   renderLockSettings();
 }
 
+async function changeCreatorPassword(){
+  const newPwd = document.getElementById('new-creator-pass').value.trim();
+  const confirmPwd = document.getElementById('confirm-creator-pass').value.trim();
+  if(newPwd.length < 6){ toast("Le mot de passe doit contenir au moins 6 caractères."); return; }
+  if(newPwd !== confirmPwd){ toast("Les deux mots de passe ne correspondent pas."); return; }
+  const { error } = await sb.rpc('jmtchat_creator_change_password', { old_pwd: creatorSessionPassword, new_pwd: newPwd });
+  if(error){ toast("Erreur : " + error.message); return; }
+  creatorSessionPassword = newPwd;
+  document.getElementById('new-creator-pass').value = '';
+  document.getElementById('confirm-creator-pass').value = '';
+  toast("Mot de passe créateur modifié !");
+}
+
 /* ---------------- Infos du créateur ---------------- */
 async function loadCreatorInfo(){
   const { data } = await sb.from('jmtchat_app_settings').select('*').eq('id', 1).maybeSingle();
@@ -2066,6 +2082,12 @@ function renderCreatorInfo(info){
         <div class="field"><label>Email</label><input id="creator-email-input" type="text" value="${(info.creator_email||'').replace(/"/g,'&quot;')}"></div>
         <div class="field"><label>Description de l'application</label><textarea id="creator-bio-input" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;">${escapeHtml(info.creator_bio||'')}</textarea></div>
         <button class="btn gold" onclick="saveCreatorInfo()">📢 Publier</button>
+      </div>
+      <div style="background:#fff;border-radius:12px;padding:14px;margin-top:14px;">
+        <div style="font-weight:600;margin-bottom:10px;">🔑 Modifier le mot de passe créateur</div>
+        <div class="field"><label>Nouveau mot de passe</label><input id="new-creator-pass" type="password"></div>
+        <div class="field"><label>Confirmer le nouveau mot de passe</label><input id="confirm-creator-pass" type="password"></div>
+        <button class="btn" onclick="changeCreatorPassword()">Modifier le mot de passe</button>
       </div>`;
   } else {
     box.innerHTML = `
@@ -2602,7 +2624,7 @@ function openCreatorUserProfile(profileId){
   document.body.appendChild(sheet);
 }
 async function toggleBlockUser(profileId, blocked){
-  const { error } = await sb.rpc('jmtchat_creator_set_blocked', { target_id: profileId, blocked, pwd: CREATOR_PASS });
+  const { error } = await sb.rpc('jmtchat_creator_set_blocked', { target_id: profileId, blocked, pwd: creatorSessionPassword });
   if(error){ toast("Erreur : " + error.message); return; }
   document.querySelector('.sheet')?.remove();
   toast(blocked ? "Utilisateur bloqué." : "Utilisateur débloqué.");
