@@ -436,6 +436,7 @@
   <div class="conv-inputbar">
     <button class="icon-btn" onclick="toggleAttachMenu()">📎</button>
     <button class="icon-btn" onclick="insertPhoto()">📷</button>
+    <button class="icon-btn" onclick="toggleEmojiPicker()">😊</button>
     <input id="msg-input" type="text" placeholder="Écrire un message..." onkeydown="if(event.key==='Enter')sendMessage()">
     <button class="icon-btn" id="mic-btn" onclick="toggleVoiceRecording()">🎤</button>
     <button class="send-btn" onclick="sendMessage()">➤</button>
@@ -444,7 +445,9 @@
       <div class="opt" onclick="attachGalleryPhoto()"><div class="circ" style="background:#e6453b;">🖼️</div>Galerie</div>
       <div class="opt" onclick="attachCameraVideo()"><div class="circ" style="background:#1877e6;">📷</div>Caméra</div>
       <div class="opt" onclick="attachLocation()"><div class="circ" style="background:#22c55e;">📍</div>Localisation</div>
+      <div class="opt" onclick="attachGif()"><div class="circ" style="background:#ff9800;font-size:12px;font-weight:800;">GIF</div>GIF</div>
     </div>
+    <div id="emoji-picker" class="hidden" style="position:absolute;bottom:56px;left:10px;right:10px;max-height:220px;overflow-y:auto;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:10px;display:flex;flex-wrap:wrap;gap:2px;z-index:55;"></div>
   </div>
 </div>
 
@@ -820,7 +823,7 @@ function openMessageActions(msgId){
   const m = messagesById[msgId];
   if(!m || m.is_deleted) return;
   const isMine = m.sender_id === me.id;
-  const isDownloadable = ['image','video','document'].includes(m.msg_type);
+  const isDownloadable = ['image','video','document','gif'].includes(m.msg_type);
   const sheet = document.createElement('div');
   sheet.className = 'sheet';
   sheet.innerHTML = `
@@ -994,6 +997,78 @@ function attachLocation(){
     { enableHighAccuracy:true, timeout:10000 }
   );
 }
+
+/* ---------------- Émojis ---------------- */
+const EMOJI_LIST = ['😀','😁','😂','🤣','😊','😍','😘','😜','🤔','😎','😢','😭','😡','🥰','😅','🙃','😉','🤩','😋','😐','🤨','😏','🙄','😬','🤯','🥺','😤','😴','🥳','😇','🤗','😱',
+  '👍','👎','👏','🙏','💪','🤝','👋','✌️','🤟','👌','✋','🤙',
+  '❤️','💔','💕','💯','🔥','✨','⭐','🌟','🎉','🎊','🌈','☀️','🌙','⚡',
+  '🍕','🍔','🍟','🍎','☕','🍺','🎂','🍫','🍿',
+  '⚽','🏀','🎮','📱','💻','🎵','📸','🚗','✈️','🏠','💰','⏰','📅','✅','❌','❓','❗','💤','🤒','🙌'];
+function toggleEmojiPicker(){
+  document.getElementById('attach-menu').classList.add('hidden');
+  const p = document.getElementById('emoji-picker');
+  if(p.classList.contains('hidden')){
+    if(!p.dataset.filled){
+      p.innerHTML = EMOJI_LIST.map(e => `<button style="font-size:22px;background:none;border:none;cursor:pointer;padding:4px;" onclick="insertEmoji('${e}')">${e}</button>`).join('');
+      p.dataset.filled = '1';
+    }
+    p.classList.remove('hidden');
+  } else {
+    p.classList.add('hidden');
+  }
+}
+function insertEmoji(e){
+  const input = document.getElementById('msg-input');
+  input.value += e;
+  input.focus();
+}
+
+/* ---------------- GIF (via Giphy) ---------------- */
+const GIPHY_API_KEY = "BPFVb2bIOQsFWZ9nHqCuMsE6lA0n5DuV";
+function attachGif(){
+  document.getElementById('attach-menu').classList.add('hidden');
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content" style="max-height:82vh;">
+      <div class="sheet-header"><h3>Envoyer un GIF</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <input id="gif-search-input" type="text" placeholder="Rechercher un GIF..." style="width:100%;padding:10px 14px;border-radius:20px;border:1px solid #d0d5dd;margin-bottom:12px;" oninput="debouncedGifSearch()">
+        <div id="gif-results" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:52vh;overflow-y:auto;"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+  searchGifs('bonjour');
+}
+let gifSearchTimeout = null;
+function debouncedGifSearch(){
+  clearTimeout(gifSearchTimeout);
+  gifSearchTimeout = setTimeout(()=>{
+    const q = document.getElementById('gif-search-input').value.trim();
+    searchGifs(q || 'bonjour');
+  }, 400);
+}
+async function searchGifs(query){
+  const results = document.getElementById('gif-results');
+  if(!results) return;
+  results.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;">Recherche...</div>';
+  try{
+    const url = `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(query)}&limit=20&rating=pg-13&lang=fr`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if(!data.data || !data.data.length){ results.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;">Aucun résultat.</div>'; return; }
+    results.innerHTML = data.data.map(g=>{
+      const gifUrl = g.images?.fixed_height?.url || g.images?.original?.url;
+      return `<img src="${gifUrl}" style="width:100%;border-radius:8px;cursor:pointer;" onclick="sendGif('${gifUrl}')">`;
+    }).join('');
+  }catch(e){
+    results.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--danger);padding:20px;font-size:13px;">Erreur de recherche. Vérifie la clé Giphy dans le code.</div>';
+  }
+}
+async function sendGif(url){
+  document.querySelector('.sheet')?.remove();
+  await sendMediaMessage('gif', { url });
+}
 let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
@@ -1031,6 +1106,7 @@ function renderBubbleContent(m){
   let data;
   try{ data = JSON.parse(m.content); }catch(e){ return escapeHtml(m.content||''); }
   if(m.msg_type==='image') return `<img src="${data.url}" style="max-width:220px;border-radius:10px;display:block;cursor:pointer;" onclick="window.open('${data.url}','_blank')">`;
+  if(m.msg_type==='gif') return `<img src="${data.url}" style="max-width:200px;border-radius:10px;display:block;">`;
   if(m.msg_type==='video') return `<video src="${data.url}" controls style="max-width:220px;border-radius:10px;display:block;"></video>`;
   if(m.msg_type==='voice') return `<audio src="${data.url}" controls style="max-width:220px;"></audio>`;
   if(m.msg_type==='document') return `<a href="${data.url}" target="_blank" style="display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit;">📄 <span style="text-decoration:underline;word-break:break-all;">${escapeHtml(data.name||'Document')}</span></a>`;
@@ -1039,6 +1115,7 @@ function renderBubbleContent(m){
 }
 function lastMessagePreview(m){
   if(m.msg_type==='image') return '📷 Photo';
+  if(m.msg_type==='gif') return '🎞️ GIF';
   if(m.msg_type==='video') return '🎬 Vidéo';
   if(m.msg_type==='voice') return '🎤 Message vocal';
   if(m.msg_type==='document') return '📄 Document';
