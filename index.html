@@ -349,6 +349,7 @@
 <div id="screen-app" class="screen">
   <div class="topbar">
     <img src="logo.png" class="logo" alt="JMTchat">
+    <span id="topbar-gjm" onclick="openCreatorModal()" style="font-size:10px;color:rgba(255,255,255,.55);letter-spacing:1px;cursor:pointer;margin-left:4px;">GJM</span>
     <h1 id="tab-title">JMTchat</h1>
     <span class="sub" id="creator-badge-top"></span>
   </div>
@@ -713,6 +714,7 @@ async function enterApp(){
   document.getElementById('my-avatar-status').src = me.avatar_url || initialsAvatar(me.profile_name);
   if(me.is_creator){
     document.getElementById('creator-badge-top').innerHTML = '<span class="badge-creator">CRÉATEUR</span>';
+    document.getElementById('topbar-gjm').style.display = 'none';
   }
   if(!me.is_creator){
     const newCount = (me.login_count||0) + 1;
