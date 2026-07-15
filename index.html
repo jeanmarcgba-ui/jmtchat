@@ -117,6 +117,9 @@
   #screen-app{}
   .app-body{flex:1;display:flex;overflow:hidden;}
   .tabpanel{flex:1;overflow-y:auto;display:none;}
+  #tab-tchat, #tab-actu, #tab-groupe{background:#1b1c20;}
+  #tab-tchat .section-title, #tab-actu .section-title, #tab-groupe .section-title{color:#9aa1ab;}
+  #tab-tchat .empty-state, #tab-actu .empty-state, #tab-groupe .empty-state{color:#8a929c;}
   .tabpanel.active{display:block;}
 
   .bottom-nav{
@@ -194,10 +197,10 @@
     font-size:16px;cursor:pointer;flex-shrink:0;
   }
   .attach-menu{
-    position:absolute;bottom:56px;left:10px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);
-    padding:10px;display:flex;gap:14px;
+    position:absolute;bottom:56px;left:10px;right:10px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);
+    padding:10px;display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-start;
   }
-  .attach-menu .opt{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;width:60px;}
+  .attach-menu .opt{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;width:56px;}
   .attach-menu .opt .circ{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:19px;color:#fff;}
 
   /* Actualité (statuts) */
@@ -416,7 +419,7 @@
 <div id="screen-conv" class="screen">
   <div class="conv-header">
     <span class="back" onclick="closeConversation()">←</span>
-    <img id="conv-avatar" src="">
+    <img id="conv-avatar" src="" onclick="convHeaderAvatarClick()" style="cursor:pointer;">
     <div>
       <div id="conv-name" style="font-weight:700;font-size:14.5px;"></div>
       <div id="conv-status" style="font-size:11px;color:#c9d4ea;"></div>
@@ -696,6 +699,55 @@ function switchTab(tab){
   if(tab==='journal') loadCallLog();
 }
 
+/* ---------------- Voir le profil d'un utilisateur / visionner une photo ---------------- */
+function openUserProfile(userId){
+  const p = allProfiles.find(x=>x.id===userId);
+  if(!p) return;
+  const avatarUrl = p.avatar_url || initialsAvatar(p.profile_name);
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Profil</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body" style="text-align:center;">
+        <img src="${avatarUrl}" style="width:120px;height:120px;border-radius:50%;object-fit:cover;border:3px solid var(--gold);cursor:pointer;" onclick="openPhotoViewer('${avatarUrl}')">
+        <div style="font-size:19px;font-weight:700;margin-top:14px;">${p.profile_name || p.full_name}</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:4px;">${p.phone||''}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;">${p.is_online ? '🟢 En ligne' : 'Hors ligne'}</div>
+        <button class="btn" style="margin-top:18px;" onclick="this.closest('.sheet').remove();openConversation('user','${p.id}')">💬 Envoyer un message</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+function convHeaderAvatarClick(){
+  if(!currentConv) return;
+  if(currentConv.type === 'user') openUserProfile(currentConv.id);
+  else openPhotoViewer(currentConv.avatar || initialsAvatar(currentConv.name));
+}
+function openPhotoViewer(url){
+  const v = document.createElement('div');
+  v.className = 'photo-viewer';
+  v.style.cssText = 'position:fixed;inset:0;background:#000;z-index:500;display:flex;flex-direction:column;';
+  v.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px;">
+      <span onclick="this.closest('.photo-viewer').remove()" style="color:#fff;font-size:22px;cursor:pointer;">←</span>
+      <span onclick="downloadPhotoFromViewer('${url}')" style="color:#fff;font-size:22px;cursor:pointer;">⬇️</span>
+    </div>
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+      <img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">
+    </div>`;
+  document.body.appendChild(v);
+}
+function downloadPhotoFromViewer(url){
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 /* ---------------- Tchat : contacts ---------------- */
 async function loadContacts(){
   const { data } = await sb.from('jmtchat_profiles').select('*').neq('id', me.id).order('profile_name');
@@ -708,7 +760,7 @@ function renderContactList(){
   if(!allProfiles.length){ list.innerHTML = '<div class="empty-state">Personne d\'autre pour l\'instant. Partage JMTchat autour de toi !</div>'; return; }
   list.innerHTML = allProfiles.map(p => `
     <div class="list-item" onclick="openConversation('user','${p.id}')">
-      <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+      <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}" onclick="event.stopPropagation();openUserProfile('${p.id}')">
       <div class="info">
         <div class="name">${p.profile_name || p.full_name}</div>
         <div class="last">${p.is_online ? 'En ligne' : 'Hors ligne'}</div>
@@ -736,7 +788,7 @@ async function loadDiscussions(){
     const info = map[id];
     return `
       <div class="list-item" onclick="openConversation('user','${id}')">
-        <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+        <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}" onclick="event.stopPropagation();openUserProfile('${p.id}')">
         <div class="info">
           <div class="name">${p.profile_name || p.full_name}</div>
           <div class="last">${info.last.sender_id===me.id?'Vous : ':''}${lastMessagePreview(info.last)}</div>
@@ -1332,7 +1384,7 @@ function openMyProfile(){
       <div class="sheet-header"><h3>Mon profil</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
       <div class="sheet-body">
         <div class="avatar-picker" style="margin:0 auto 16px;">
-          <img id="edit-avatar-preview" src="${me.avatar_url || initialsAvatar(me.profile_name)}">
+          <img id="edit-avatar-preview" src="${me.avatar_url || initialsAvatar(me.profile_name)}" onclick="openPhotoViewer(this.src)" style="cursor:pointer;">
           <div class="cam" onclick="document.getElementById('edit-avatar-file').click()">📷</div>
           <input type="file" id="edit-avatar-file" accept="image/*" class="hidden" onchange="onEditAvatarChosen(event)">
         </div>
@@ -1501,6 +1553,7 @@ function toggleGroupMenu(){
         <div class="item" onclick="openPromoteAdmin()">Ajouter d'autres administrateurs</div>
         <div class="item" onclick="changeGroupAvatar()">Modifier la photo du groupe</div>
         <div class="item" onclick="removeGroupAvatar()">Supprimer la photo du groupe</div>
+        <div class="item" style="color:var(--danger);" onclick="confirmDeleteGroup()">🗑️ Supprimer le groupe</div>
       ` : ''}`;
     dd.classList.remove('hidden');
   } else {
@@ -1529,6 +1582,27 @@ async function removeGroupAvatar(){
   await loadGroups();
   toast("Photo du groupe supprimée.");
 }
+function confirmDeleteGroup(){
+  document.getElementById('group-dropdown').classList.add('hidden');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="auth-card" style="max-width:340px;">
+      <h2>Supprimer le groupe</h2>
+      <p class="tag">Cette action est définitive. Tous les messages du groupe seront supprimés pour tout le monde.</p>
+      <button class="btn" style="background:var(--danger);" onclick="deleteGroupNow()">Oui, supprimer</button>
+      <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+async function deleteGroupNow(){
+  const { error } = await sb.rpc('jmtchat_delete_group', { grp_id: currentConv.id });
+  document.querySelector('.modal-overlay')?.remove();
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Groupe supprimé.");
+  closeConversation();
+  await loadGroups();
+}
 async function openMembersList(){
   document.getElementById('group-dropdown').classList.add('hidden');
   const g = myGroups.find(x=>x.id===currentConv.id);
@@ -1542,7 +1616,7 @@ async function openMembersList(){
       <div class="sheet-body">
         ${data.map(m => `
           <div class="select-row" style="cursor:default;">
-            <img src="${m.jmtchat_profiles.avatar_url || initialsAvatar(m.jmtchat_profiles.profile_name)}">
+            <img src="${m.jmtchat_profiles.avatar_url || initialsAvatar(m.jmtchat_profiles.profile_name)}" style="cursor:pointer;" onclick="openUserProfile('${m.profile_id}')">
             <div style="flex:1;">
               <div>${m.jmtchat_profiles.profile_name || m.jmtchat_profiles.full_name} ${m.is_admin?'<span style="font-size:10px;color:var(--blue);">· admin</span>':''}</div>
               <div style="font-size:11px;color:var(--muted);">${m.jmtchat_profiles.phone}</div>
@@ -1690,11 +1764,17 @@ async function loadCallLog(){
           <div class="last ${missed?'missed':''}">${icon} ${label} · ${fmtTime(c.created_at)}</div>
         </div>
         <div style="font-size:18px;">${typeIcon}</div>
+        <button class="icon-btn" style="color:var(--danger);font-size:16px;" onclick="event.stopPropagation();deleteCallLogEntry('${c.id}')">🗑️</button>
       </div>`;
   }).join('');
 }
 
 /* ---------------- Appels audio/vidéo (WebRTC) ---------------- */
+async function deleteCallLogEntry(callId){
+  const { error } = await sb.rpc('jmtchat_delete_call', { call_id: callId });
+  if(error){ toast("Erreur : " + error.message); return; }
+  loadCallLog();
+}
 const rtcConfig = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' }
