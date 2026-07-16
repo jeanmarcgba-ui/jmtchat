@@ -2774,7 +2774,7 @@ async function loadComments(){
       ${isMine || canModerate ? `
         <div style="display:flex;gap:14px;margin-top:8px;">
           ${isMine ? `<span style="font-size:12px;color:var(--blue);cursor:pointer;" onclick="editComment('${c.id}')">✏️ Modifier</span>` : ''}
-          <span style="font-size:12px;color:var(--danger);cursor:pointer;" onclick="${isMine ? `deleteComment('${c.id}')` : `deleteCommentByCreator('${c.id}')`}">🗑️ Supprimer</span>
+          <span style="font-size:12px;color:var(--danger);cursor:pointer;" onclick="${me.is_creator ? `deleteCommentByCreator('${c.id}')` : `deleteComment('${c.id}')`}">🗑️ Supprimer</span>
         </div>` : ''}
     </div>`;
   }).join('');
@@ -2822,7 +2822,9 @@ function editComment(commentId){
 async function saveEditedComment(commentId){
   const newText = document.getElementById('edit-comment-text').value.trim();
   if(!newText){ toast("Le commentaire ne peut pas être vide."); return; }
-  const { error } = await sb.from('jmtchat_comments').update({ content:newText, edited:true }).eq('id', commentId);
+  const { error } = me.is_creator
+    ? await sb.rpc('jmtchat_creator_edit_comment', { comment_id: commentId, new_content: newText, pwd: creatorSessionPassword })
+    : await sb.from('jmtchat_comments').update({ content:newText, edited:true }).eq('id', commentId);
   if(error){ toast("Erreur : " + error.message); return; }
   document.querySelector('.sheet')?.remove();
   toast("Commentaire modifié !");
