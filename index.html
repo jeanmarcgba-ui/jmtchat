@@ -778,6 +778,7 @@ async function enterApp(){
     subscribeRealtime();
     subscribeCallChannel();
     checkPushBanner();
+    if(!me.is_blocked) checkPendingIncomingCall();
     if(me.is_blocked){
       lockDownBlockedUser();
     } else {
@@ -1308,6 +1309,11 @@ function renderBubbleContent(m){
   if(m.msg_type==='voice') return `<audio src="${data.url}" controls style="max-width:220px;"></audio>`;
   if(m.msg_type==='document') return `<a href="${data.url}" target="_blank" style="display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit;">📄 <span style="text-decoration:underline;word-break:break-all;">${escapeHtml(data.name||'Document')}</span></a>`;
   if(m.msg_type==='location') return `<a href="https://www.google.com/maps?q=${data.lat},${data.lng}" target="_blank" style="text-decoration:none;color:inherit;">📍 Voir la position sur la carte</a>`;
+  if(m.msg_type==='missed_call'){
+    const icon = data.call_type==='video' ? '🎥' : '📞';
+    const label = m.sender_id===me.id ? 'Appel sans réponse' : 'Appel manqué';
+    return `<span style="color:var(--danger);display:flex;align-items:center;gap:6px;">${icon} ${label}</span>`;
+  }
   return escapeHtml(m.content||'');
 }
 function lastMessagePreview(m){
@@ -1317,6 +1323,7 @@ function lastMessagePreview(m){
   if(m.msg_type==='voice') return '🎤 Message vocal';
   if(m.msg_type==='document') return '📄 Document';
   if(m.msg_type==='location') return '📍 Position';
+  if(m.msg_type==='missed_call') return (m.sender_id===me.id ? '📞 Appel sans réponse' : '📞 Appel manqué');
   return escapeHtml(m.content||'');
 }
 function callPlaceholder(type){ toast((type==='audio'?"📞 Appel audio":"🎥 Appel vidéo") + " : arrive dans une prochaine étape."); }
@@ -1924,12 +1931,13 @@ async function loadCallLog(){
     const icon = missed ? '📵' : (isOutgoing ? '↗️' : '↙️');
     const label = missed ? 'Manqué' : (isOutgoing ? 'Sortant' : 'Entrant');
     const typeIcon = c.call_type==='video' ? '🎥' : '📞';
+    const statusColor = missed ? '#7a1330' : (isOutgoing ? '#1e4620' : '#0b1b3a');
     return `
-      <div class="list-item call-item" onclick="startCallTo('${otherId}','${c.call_type}')">
+      <div class="list-item call-item" style="border-left:4px solid ${statusColor};" onclick="startCallTo('${otherId}','${c.call_type}')">
         <img class="avatar" src="${avatar}">
         <div class="info">
           <div class="name">${name}</div>
-          <div class="last ${missed?'missed':''}">${icon} ${label} · ${fmtTime(c.created_at)}</div>
+          <div class="last" style="color:${statusColor};font-weight:600;">${icon} ${label} · ${fmtTime(c.created_at)}</div>
         </div>
         <div style="font-size:18px;">${typeIcon}</div>
         <button class="icon-btn" style="color:var(--danger);font-size:16px;" onclick="event.stopPropagation();deleteCallLogEntry('${c.id}')">🗑️</button>
@@ -2245,6 +2253,7 @@ let incomingOffer = null;
 let callTimer = null;
 let callSeconds = 0;
 let callRingTimeout = null;
+let callOfferResendInterval = null;
 let isGroupCall = false;
 let groupCallId = null;
 let groupCallChannel = null;
@@ -2324,11 +2333,47 @@ function handleCallSignal(payload){
     }
   } else if(payload.kind === 'decline'){
     toast(payload.reason==='busy' ? "La personne est déjà en appel." : "Appel refusé.");
+    if(payload.reason!=='busy' && currentCallPartner) logMissedCall(currentCallPartner.id, callType);
     closeCallScreen();
   } else if(payload.kind === 'end'){
     toast("Appel terminé.");
     closeCallScreen();
   }
+}
+async function checkPendingIncomingCall(){
+  try{
+    const since = new Date(Date.now() - 25000).toISOString();
+    const { data } = await sb.from('jmtchat_calls')
+      .select('*')
+      .eq('receiver_id', me.id)
+      .eq('call_status', 'outgoing')
+      .gt('created_at', since)
+      .order('created_at', { ascending:false })
+      .limit(1)
+      .maybeSingle();
+    if(data && data.sdp_offer){
+      const { data: caller } = await sb.from('jmtchat_profiles').select('profile_name, full_name, avatar_url').eq('id', data.caller_id).maybeSingle();
+      handleCallSignal({
+        kind:'offer',
+        from: data.caller_id,
+        fromName: caller?.profile_name || caller?.full_name || 'Quelqu\'un',
+        fromAvatar: caller?.avatar_url,
+        callType: data.call_type,
+        sdp: data.sdp_offer
+      });
+    }
+  }catch(e){ console.warn("Vérification d'appel en attente échouée", e); }
+}
+async function logMissedCall(otherId, type){
+  try{
+    await sb.from('jmtchat_messages').insert({
+      conversation_id: convIdFor(otherId),
+      sender_id: me.id,
+      receiver_id: otherId,
+      content: JSON.stringify({ call_type:type }),
+      msg_type: 'missed_call'
+    });
+  }catch(e){ console.warn("Impossible d'enregistrer l'appel manqué", e); }
 }
 async function startCall(type){
   if(!currentConv) return;
@@ -2365,12 +2410,23 @@ async function startCall(type){
     };
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-    sendCallSignal(currentCallPartner.id, {
-      kind:'offer', from:me.id, fromName: me.profile_name||me.full_name, fromAvatar: me.avatar_url, callType:type, sdp:offer
-    });
-    await sb.from('jmtchat_calls').insert({ caller_id:me.id, receiver_id:currentCallPartner.id, call_type:type, call_status:'outgoing' });
+    const sendOfferSignal = ()=>{
+      sendCallSignal(currentCallPartner.id, {
+        kind:'offer', from:me.id, fromName: me.profile_name||me.full_name, fromAvatar: me.avatar_url, callType:type, sdp:offer
+      });
+    };
+    sendOfferSignal();
+    callOfferResendInterval = setInterval(()=>{
+      if(callAnswered){ clearInterval(callOfferResendInterval); callOfferResendInterval = null; return; }
+      sendOfferSignal();
+    }, 3000);
+    await sb.from('jmtchat_calls').insert({ caller_id:me.id, receiver_id:currentCallPartner.id, call_type:type, call_status:'outgoing', sdp_offer:offer });
     callRingTimeout = setTimeout(()=>{
-      if(!callAnswered){ toast("Pas de réponse."); endCall(); }
+      if(!callAnswered){
+        toast("Pas de réponse.");
+        logMissedCall(currentCallPartner.id, type);
+        endCall();
+      }
     }, 30000);
   }catch(e){
     toast("Impossible d'accéder au micro/caméra : " + e.message);
@@ -2447,6 +2503,8 @@ function endCall(){
 }
 function closeCallScreen(){
   clearTimeout(callRingTimeout);
+  clearInterval(callOfferResendInterval);
+  callOfferResendInterval = null;
   if(peerConnection){ peerConnection.close(); peerConnection = null; }
   if(isGroupCall){
     Object.values(groupPeers).forEach(p => { try{ p.pc.close(); }catch(e){} });
