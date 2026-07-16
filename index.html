@@ -1107,7 +1107,8 @@ function insertPhoto(){
 }
 function attachDocument(){
   document.getElementById('attach-menu').classList.add('hidden');
-  triggerFileInput('*/*', null, async(file)=>{
+  const docTypes = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,application/zip';
+  triggerFileInput(docTypes, null, async(file)=>{
     toast("Envoi du document...");
     try{
       const url = await uploadToChat(file, 'docs');
