@@ -360,6 +360,9 @@
 
 <!-- ============ APP PRINCIPALE ============ -->
 <div id="screen-app" class="screen">
+  <div id="update-banner" class="hidden" style="background:var(--gold);color:var(--navy-dark);padding:8px 16px;display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;cursor:pointer;" onclick="window.location.reload()">
+    🔄 Nouvelle version disponible — touche ici pour actualiser
+  </div>
   <div class="topbar">
     <span id="topbar-back" class="hidden" onclick="exitCreatorMode()" style="cursor:pointer;font-size:20px;margin-right:2px;">←</span>
     <div style="display:flex;flex-direction:column;align-items:center;line-height:1;">
@@ -541,6 +544,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
+const APP_VERSION = "2026.07.16.1";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -1853,6 +1857,16 @@ function urlBase64ToUint8Array(base64String){
   for(let i=0;i<rawData.length;i++) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
 }
+/* ---------------- Vérification de nouvelle version ---------------- */
+async function checkForUpdate(){
+  try{
+    const res = await fetch('version.json?t=' + Date.now(), { cache:'no-store' });
+    const data = await res.json();
+    if(data.version && data.version !== APP_VERSION){
+      document.getElementById('update-banner').classList.remove('hidden');
+    }
+  }catch(e){ /* silencieux : pas grave si ça échoue */ }
+}
 async function registerServiceWorker(){
   if(!('serviceWorker' in navigator)) return null;
   try{ return await navigator.serviceWorker.register('service-worker.js'); }
@@ -2905,6 +2919,11 @@ async function deleteCommentByCreator(commentId){
 /* ---------------- Démarrage ---------------- */
 window.addEventListener('DOMContentLoaded', async ()=>{
   registerServiceWorker();
+  checkForUpdate();
+  setInterval(checkForUpdate, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible') checkForUpdate();
+  });
   await ensureAuthSession();
   const ok = await tryAutoLogin();
   if(!ok){
