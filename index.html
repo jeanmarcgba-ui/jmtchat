@@ -708,14 +708,21 @@ async function tryAutoLogin(){
 }
 
 /* ---------------- Créateur ---------------- */
-function openCreatorModal(){ document.getElementById('creator-modal').classList.remove('hidden'); }
-function closeCreatorModal(){ document.getElementById('creator-modal').classList.add('hidden'); }
+function openCreatorModal(){
+  document.getElementById('creator-pass').value = '';
+  document.getElementById('creator-modal').classList.remove('hidden');
+}
+function closeCreatorModal(){
+  document.getElementById('creator-pass').value = '';
+  document.getElementById('creator-modal').classList.add('hidden');
+}
 let previousProfile = null;
 let creatorSessionPassword = null;
 async function creatorLogin(){
   const p = document.getElementById('creator-pass').value;
   const { data: valid, error } = await sb.rpc('jmtchat_creator_verify_password', { pwd: p });
   if(error){ toast("Erreur : " + error.message); return; }
+  document.getElementById('creator-pass').value = '';
   if(valid){
     creatorSessionPassword = p;
     if(me && !me.is_creator){ previousProfile = me; }
@@ -734,11 +741,21 @@ function exitCreatorMode(){
 }
 
 /* ---------------- Entrée dans l'app ---------------- */
+let appSessionId = 0;
+function unsubscribeAllRealtime(){
+  if(msgChannel){ sb.removeChannel(msgChannel); msgChannel = null; }
+  if(ownCallChannel){ sb.removeChannel(ownCallChannel); ownCallChannel = null; }
+  if(commentsChannel){ sb.removeChannel(commentsChannel); commentsChannel = null; }
+  if(outgoingCallChannel){ sb.removeChannel(outgoingCallChannel); outgoingCallChannel = null; }
+}
 async function enterApp(){
+  const mySession = ++appSessionId;
+  unsubscribeAllRealtime();
   document.getElementById('screen-onboarding').classList.remove('active');
   if(!me.is_creator && me.lock_code_hash){
     await requireUnlock();
   }
+  if(mySession !== appSessionId) return;
   document.getElementById('screen-app').classList.add('active');
   document.querySelectorAll('.bottom-nav button').forEach(b => b.style.display = '');
   document.getElementById('my-name-display').textContent = me.profile_name || me.full_name;
@@ -753,8 +770,11 @@ async function enterApp(){
     sb.from('jmtchat_profiles').update({ last_seen: new Date().toISOString(), login_count:newCount, is_online:true }).eq('id', me.id).then(()=>{});
     me.login_count = newCount;
     await loadContacts();
+    if(mySession !== appSessionId) return;
     await loadStatuses();
+    if(mySession !== appSessionId) return;
     await loadGroups();
+    if(mySession !== appSessionId) return;
     subscribeRealtime();
     subscribeCallChannel();
     checkPushBanner();
@@ -765,6 +785,7 @@ async function enterApp(){
     }
   } else {
     await loadCreatorDashboard();
+    if(mySession !== appSessionId) return;
   }
 }
 function lockDownBlockedUser(){
@@ -2230,8 +2251,10 @@ let groupCallChannel = null;
 let groupPeers = {};
 let pendingGroupInvite = null;
 
+let ownCallChannel = null;
 function subscribeCallChannel(){
-  sb.channel(`call-${me.id}`)
+  if(ownCallChannel) sb.removeChannel(ownCallChannel);
+  ownCallChannel = sb.channel(`call-${me.id}`)
     .on('broadcast', { event:'signal' }, ({ payload }) => handleCallSignal(payload))
     .subscribe();
 }
@@ -2756,8 +2779,10 @@ async function loadComments(){
     </div>`;
   }).join('');
 }
+let commentsChannel = null;
 function subscribeCommentsRealtime(){
-  sb.channel('jmtchat-comments-rt')
+  if(commentsChannel) sb.removeChannel(commentsChannel);
+  commentsChannel = sb.channel('jmtchat-comments-rt')
     .on('postgres_changes', { event:'*', schema:'public', table:'jmtchat_comments' }, () => {
       if(document.getElementById('tab-option')?.classList.contains('active')) loadComments();
     })
