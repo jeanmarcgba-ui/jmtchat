@@ -424,6 +424,9 @@
 
     <!-- OPTION -->
     <div id="tab-option" class="tabpanel">
+      <div id="blocked-banner" class="hidden" style="background:var(--danger);color:#fff;padding:14px 16px;font-size:13.5px;">
+        🚫 Ton compte a été bloqué par l'administrateur. Tu peux laisser un commentaire ci-dessous pour le contacter, ou utiliser les coordonnées du créateur affichées plus bas.
+      </div>
       <div id="lock-section">
         <div class="section-title">Verrouillage de l'application</div>
         <div id="lock-settings-box" style="padding:16px;"></div>
@@ -439,6 +442,14 @@
             <button class="btn gold" onclick="sendBroadcastNotification()">📢 Envoyer à tous</button>
           </div>
         </div>
+      </div>
+      <div class="section-title">💬 Commentaires (visibles par tous)</div>
+      <div style="padding:16px;">
+        <div style="background:#fff;border-radius:12px;padding:14px;margin-bottom:14px;">
+          <textarea id="comment-text" rows="2" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;" placeholder="Écris un commentaire..."></textarea>
+          <button class="btn" style="margin-top:10px;" onclick="submitComment()">Publier</button>
+        </div>
+        <div id="comments-list"></div>
       </div>
     </div>
 
@@ -602,10 +613,6 @@ async function verifyCode(){
   // Vérifie si le numéro existe déjà
   const { data: existing } = await sb.from('jmtchat_profiles').select('*').eq('phone', pendingSignup.phone).maybeSingle();
   if(existing){
-    if(existing.is_blocked){
-      toast("Ce compte a été bloqué par l'administrateur.");
-      return;
-    }
     me = existing;
     if(!existing.auth_user_id){
       const { data: { user } } = await sb.auth.getUser();
@@ -681,11 +688,6 @@ async function tryAutoLogin(){
   if(!sid) return false;
   const { data } = await sb.from('jmtchat_profiles').select('*').eq('id', sid).maybeSingle();
   if(data){
-    if(data.is_blocked){
-      toast("Ce compte a été bloqué par l'administrateur.");
-      clearSession();
-      return false;
-    }
     me = data;
     if(!me.auth_user_id){
       const { data: { user } } = await sb.auth.getUser();
@@ -750,10 +752,22 @@ async function enterApp(){
     subscribeRealtime();
     subscribeCallChannel();
     checkPushBanner();
-    switchTab('tchat');
+    if(me.is_blocked){
+      lockDownBlockedUser();
+    } else {
+      switchTab('tchat');
+    }
   } else {
     await loadCreatorDashboard();
   }
+}
+function lockDownBlockedUser(){
+  document.querySelectorAll('.bottom-nav button').forEach(b=>{
+    b.style.display = b.dataset.tab==='option' ? '' : 'none';
+  });
+  switchTab('option');
+  const banner = document.getElementById('blocked-banner');
+  if(banner) banner.classList.remove('hidden');
 }
 
 function switchTab(tab){
@@ -770,6 +784,7 @@ function switchTab(tab){
     document.getElementById('broadcast-section').classList.toggle('hidden', !me.is_creator);
     if(!me.is_creator) renderLockSettings();
     loadCreatorInfo();
+    loadComments();
   }
 }
 
@@ -1035,8 +1050,16 @@ function subscribeRealtime(){
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_profiles' }, payload => {
       if(payload.new.id !== me.id){ loadContacts(); toast(`${payload.new.profile_name || payload.new.full_name} a rejoint JMTchat !`); }
     })
-    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'jmtchat_profiles' }, () => {
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'jmtchat_profiles' }, payload => {
+      if(payload.new.id === me.id && payload.new.is_blocked && !me.is_blocked){
+        me.is_blocked = true;
+        lockDownBlockedUser();
+      }
       loadContacts();
+    })
+    .on('postgres_changes', { event:'DELETE', schema:'public', table:'jmtchat_profiles' }, payload => {
+      loadContacts();
+      if(document.getElementById('tab-repertoire')?.classList.contains('active')) loadDirectory();
     })
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_statuses' }, () => {
       if(document.getElementById('tab-actu').classList.contains('active')) loadStatuses();
@@ -2644,9 +2667,32 @@ function openCreatorUserProfile(profileId){
         <button class="btn" style="margin-top:16px;background:${p.is_blocked?'#22c55e':'var(--danger)'};" onclick="toggleBlockUser('${p.id}', ${!p.is_blocked})">
           ${p.is_blocked ? '✅ Débloquer cet utilisateur' : '🚫 Bloquer cet utilisateur'}
         </button>
+        <button class="btn" style="margin-top:10px;background:#7a1330;" onclick="confirmDeleteAccountByCreator('${p.id}','${(p.profile_name||p.full_name||'').replace(/'/g,"\\'")}')">
+          🗑️ Supprimer définitivement ce compte
+        </button>
       </div>
     </div>`;
   document.body.appendChild(sheet);
+}
+function confirmDeleteAccountByCreator(profileId, name){
+  document.querySelector('.sheet')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="auth-card" style="max-width:340px;">
+      <h2>Supprimer ce compte</h2>
+      <p class="tag">Cette action est définitive. Le compte de <strong>${name}</strong> et toutes ses données seront supprimés chez tout le monde.</p>
+      <button class="btn" style="background:var(--danger);" onclick="deleteAccountByCreator('${profileId}')">Oui, supprimer</button>
+      <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+async function deleteAccountByCreator(profileId){
+  const { error } = await sb.rpc('jmtchat_creator_delete_account', { target_id: profileId, pwd: creatorSessionPassword });
+  document.querySelector('.modal-overlay')?.remove();
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Compte supprimé.");
+  loadCreatorDashboard();
 }
 async function toggleBlockUser(profileId, blocked){
   const { error } = await sb.rpc('jmtchat_creator_set_blocked', { target_id: profileId, blocked, pwd: creatorSessionPassword });
@@ -2674,6 +2720,40 @@ async function sendBroadcastNotification(){
     toast("Erreur d'envoi : " + e.message);
   }
 }
+
+/* ---------------- Commentaires publics ---------------- */
+async function loadComments(){
+  const { data } = await sb.from('jmtchat_comments').select('*').order('created_at', { ascending:false }).limit(100);
+  const box = document.getElementById('comments-list');
+  if(!box) return;
+  if(!data || !data.length){ box.innerHTML = '<div class="empty-state">Aucun commentaire pour le moment.</div>'; return; }
+  box.innerHTML = data.map(c => `
+    <div style="background:#fff;border-radius:12px;padding:12px 14px;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <img src="${c.author_avatar || initialsAvatar(c.author_name)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">
+        <span style="font-weight:600;font-size:13px;">${escapeHtml(c.author_name)}</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:auto;">${fmtTime(c.created_at)}</span>
+      </div>
+      <div style="font-size:13.5px;">${escapeHtml(c.content)}</div>
+    </div>`).join('');
+}
+async function submitComment(){
+  const content = document.getElementById('comment-text').value.trim();
+  if(!content){ toast("Écris un commentaire."); return; }
+  const authorName = me.is_creator ? 'Jean Marc (Créateur)' : (me.profile_name || me.full_name);
+  const authorAvatar = me.avatar_url || initialsAvatar(authorName);
+  const { error } = await sb.from('jmtchat_comments').insert({
+    profile_id: me.is_creator ? null : me.id,
+    author_name: authorName,
+    author_avatar: authorAvatar,
+    content
+  });
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.getElementById('comment-text').value = '';
+  toast("Commentaire publié !");
+  loadComments();
+}
+
 
 /* ---------------- Démarrage ---------------- */
 window.addEventListener('DOMContentLoaded', async ()=>{
