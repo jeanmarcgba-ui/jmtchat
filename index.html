@@ -1803,10 +1803,38 @@ async function registerServiceWorker(){
 }
 async function checkPushBanner(){
   const banner = document.getElementById('push-banner');
-  if(!('Notification' in window) || !('PushManager' in window)){ banner.classList.add('hidden'); return; }
-  if(Notification.permission === 'granted'){ banner.classList.add('hidden'); return; }
+  if(!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)){ banner.classList.add('hidden'); return; }
   if(Notification.permission === 'denied'){ banner.classList.add('hidden'); return; }
+  if(Notification.permission === 'granted'){
+    banner.classList.add('hidden');
+    try{
+      const reg = await navigator.serviceWorker.ready;
+      const existingSub = await reg.pushManager.getSubscription();
+      if(!existingSub){
+        await subscribeToPush(reg);
+      } else {
+        await saveSubscription(existingSub);
+      }
+    }catch(e){ console.warn("Vérification abonnement push échouée :", e); }
+    return;
+  }
   banner.classList.remove('hidden');
+}
+async function saveSubscription(sub){
+  const subJson = sub.toJSON();
+  await sb.from('jmtchat_push_subscriptions').upsert({
+    profile_id: me.id,
+    endpoint: subJson.endpoint,
+    subscription: subJson
+  }, { onConflict: 'profile_id,endpoint' });
+}
+async function subscribeToPush(reg){
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+  });
+  await saveSubscription(sub);
+  return sub;
 }
 async function enablePushNotifications(){
   if(!('serviceWorker' in navigator) || !('PushManager' in window)){
@@ -1820,16 +1848,7 @@ async function enablePushNotifications(){
       toast("Notifications refusées. Tu peux les réactiver dans les réglages du navigateur.");
       return;
     }
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-    });
-    const subJson = sub.toJSON();
-    await sb.from('jmtchat_push_subscriptions').upsert({
-      profile_id: me.id,
-      endpoint: subJson.endpoint,
-      subscription: subJson
-    }, { onConflict: 'profile_id,endpoint' });
+    await subscribeToPush(reg);
     document.getElementById('push-banner').classList.add('hidden');
     toast("Notifications activées !");
   }catch(e){
