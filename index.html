@@ -73,6 +73,9 @@
     width:100%;padding:11px 12px;border:1px solid #d0d5dd;border-radius:10px;font-size:14px;outline:none;
   }
   .field input:focus{border-color:var(--blue);}
+  /* Bordures noir foncé sur tous les champs de saisie de l'application */
+  input, textarea, select{ border-color:#1a1a1a !important; }
+  #comments-list, #comments-wrapper{ background:#3f3d1f; border-radius:12px; padding:12px; }
   .btn{
     width:100%;padding:12px;border:none;border-radius:10px;
     background:var(--blue);color:#fff;font-size:15px;font-weight:700;
@@ -445,11 +448,13 @@
       </div>
       <div class="section-title">💬 Commentaires (visibles par tous)</div>
       <div style="padding:16px;">
-        <div style="background:#fff;border-radius:12px;padding:14px;margin-bottom:14px;">
-          <textarea id="comment-text" rows="2" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;" placeholder="Écris un commentaire..."></textarea>
-          <button class="btn" style="margin-top:10px;" onclick="submitComment()">Publier</button>
+        <div id="comments-wrapper">
+          <div style="background:#fff;border-radius:12px;padding:14px;margin-bottom:14px;">
+            <textarea id="comment-text" rows="2" style="width:100%;padding:10px;border-radius:10px;" placeholder="Écris un commentaire..."></textarea>
+            <button class="btn" style="margin-top:10px;" onclick="submitComment()">Publier</button>
+          </div>
+          <div id="comments-list"></div>
         </div>
-        <div id="comments-list"></div>
       </div>
     </div>
 
@@ -742,6 +747,7 @@ async function enterApp(){
   document.getElementById('topbar-back').classList.toggle('hidden', !(me.is_creator && previousProfile));
   document.getElementById('topbar-gjm').style.display = me.is_creator ? 'none' : '';
   document.getElementById('creator-badge-top').innerHTML = me.is_creator ? '<span class="badge-creator">CRÉATEUR</span>' : '';
+  subscribeCommentsRealtime();
   if(!me.is_creator){
     const newCount = (me.login_count||0) + 1;
     sb.from('jmtchat_profiles').update({ last_seen: new Date().toISOString(), login_count:newCount, is_online:true }).eq('id', me.id).then(()=>{});
@@ -2722,20 +2728,40 @@ async function sendBroadcastNotification(){
 }
 
 /* ---------------- Commentaires publics ---------------- */
+let commentsById = {};
 async function loadComments(){
   const { data } = await sb.from('jmtchat_comments').select('*').order('created_at', { ascending:false }).limit(100);
   const box = document.getElementById('comments-list');
   if(!box) return;
-  if(!data || !data.length){ box.innerHTML = '<div class="empty-state">Aucun commentaire pour le moment.</div>'; return; }
-  box.innerHTML = data.map(c => `
+  commentsById = {};
+  (data||[]).forEach(c => commentsById[c.id] = c);
+  if(!data || !data.length){ box.innerHTML = '<div class="empty-state" style="color:#e5e0c8;">Aucun commentaire pour le moment.</div>'; return; }
+  box.innerHTML = data.map(c => {
+    const isMine = (me.is_creator && c.profile_id === null) || (!me.is_creator && c.profile_id === me.id);
+    const canModerate = me.is_creator && !isMine;
+    const clickAvatar = c.profile_id ? `onclick="openUserProfile('${c.profile_id}')" style="width:28px;height:28px;border-radius:50%;object-fit:cover;cursor:pointer;"` : `style="width:28px;height:28px;border-radius:50%;object-fit:cover;"`;
+    return `
     <div style="background:#fff;border-radius:12px;padding:12px 14px;margin-bottom:10px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-        <img src="${c.author_avatar || initialsAvatar(c.author_name)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">
+        <img src="${c.author_avatar || initialsAvatar(c.author_name)}" ${clickAvatar}>
         <span style="font-weight:600;font-size:13px;">${escapeHtml(c.author_name)}</span>
-        <span style="font-size:11px;color:var(--muted);margin-left:auto;">${fmtTime(c.created_at)}</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:auto;">${c.edited?'<em>modifié</em> · ':''}${fmtTime(c.created_at)}</span>
       </div>
       <div style="font-size:13.5px;">${escapeHtml(c.content)}</div>
-    </div>`).join('');
+      ${isMine || canModerate ? `
+        <div style="display:flex;gap:14px;margin-top:8px;">
+          ${isMine ? `<span style="font-size:12px;color:var(--blue);cursor:pointer;" onclick="editComment('${c.id}')">✏️ Modifier</span>` : ''}
+          <span style="font-size:12px;color:var(--danger);cursor:pointer;" onclick="${isMine ? `deleteComment('${c.id}')` : `deleteCommentByCreator('${c.id}')`}">🗑️ Supprimer</span>
+        </div>` : ''}
+    </div>`;
+  }).join('');
+}
+function subscribeCommentsRealtime(){
+  sb.channel('jmtchat-comments-rt')
+    .on('postgres_changes', { event:'*', schema:'public', table:'jmtchat_comments' }, () => {
+      if(document.getElementById('tab-option')?.classList.contains('active')) loadComments();
+    })
+    .subscribe();
 }
 async function submitComment(){
   const content = document.getElementById('comment-text').value.trim();
@@ -2751,6 +2777,42 @@ async function submitComment(){
   if(error){ toast("Erreur : " + error.message); return; }
   document.getElementById('comment-text').value = '';
   toast("Commentaire publié !");
+  loadComments();
+}
+function editComment(commentId){
+  const c = commentsById[commentId];
+  if(!c) return;
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Modifier le commentaire</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <textarea id="edit-comment-text" rows="3" style="width:100%;padding:10px;border-radius:10px;">${escapeHtml(c.content)}</textarea>
+        <button class="btn" style="margin-top:12px;" onclick="saveEditedComment('${commentId}')">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function saveEditedComment(commentId){
+  const newText = document.getElementById('edit-comment-text').value.trim();
+  if(!newText){ toast("Le commentaire ne peut pas être vide."); return; }
+  const { error } = await sb.from('jmtchat_comments').update({ content:newText, edited:true }).eq('id', commentId);
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet')?.remove();
+  toast("Commentaire modifié !");
+  loadComments();
+}
+async function deleteComment(commentId){
+  const { error } = await sb.from('jmtchat_comments').delete().eq('id', commentId);
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Commentaire supprimé.");
+  loadComments();
+}
+async function deleteCommentByCreator(commentId){
+  const { error } = await sb.rpc('jmtchat_creator_delete_comment', { comment_id: commentId, pwd: creatorSessionPassword });
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Commentaire supprimé.");
   loadComments();
 }
 
