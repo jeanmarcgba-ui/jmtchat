@@ -565,7 +565,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.16.1";
+const APP_VERSION = "2026.07.19.2";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2359,12 +2359,13 @@ function renderDirectory(){
     const avatar = p ? (p.avatar_url || initialsAvatar(name)) : initialsAvatar(name);
     const statusLabel = p ? (p.is_online ? 'En ligne · sur JMTchat' : 'Sur JMTchat') : "N'a pas encore JMTchat";
     return `
-      <div class="list-item" onclick="${p ? `openConversation('user','${p.id}')` : `toast("Cette personne n'a pas encore rejoint JMTchat.")`}">
+      <div class="list-item" onclick="${p ? `openUserProfile('${p.id}')` : `toast("Cette personne n'a pas encore rejoint JMTchat.")`}">
         <img class="avatar" src="${avatar}" onclick="event.stopPropagation();${p ? `openUserProfile('${p.id}')` : ''}">
         <div class="info">
           <div class="name">${name}</div>
           <div class="last">${statusLabel} · ${entry.contact_phone}</div>
         </div>
+        ${p ? `<button class="icon-btn" style="color:var(--blue);font-size:18px;" onclick="event.stopPropagation();openConversation('user','${p.id}')">💬</button>` : ''}
         <button class="icon-btn" style="color:var(--danger);font-size:16px;" onclick="event.stopPropagation();removeDirectoryEntry('${entry.id}')">🗑️</button>
       </div>`;
   }).join('');
