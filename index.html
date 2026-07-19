@@ -587,7 +587,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.19.4";
+const APP_VERSION = "2026.07.19.5";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -734,6 +734,7 @@ async function checkQrClaimed(){
     document.getElementById('qr-status').textContent = 'Connexion en cours...';
     const { data: profile } = await sb.from('jmtchat_profiles').select('*').eq('id', data.profile_id).maybeSingle();
     if(profile){
+      await sb.rpc('jmtchat_register_device', { target_id: profile.id });
       me = profile;
       saveSession(me.id);
       showOnboardingStep1();
@@ -765,13 +766,7 @@ async function verifyCode(){
   const { data: existing } = await sb.from('jmtchat_profiles').select('*').eq('phone', pendingSignup.phone).maybeSingle();
   if(existing){
     me = existing;
-    if(!existing.auth_user_id){
-      const { data: { user } } = await sb.auth.getUser();
-      if(user){
-        await sb.from('jmtchat_profiles').update({ auth_user_id: user.id }).eq('id', existing.id);
-        me.auth_user_id = user.id;
-      }
-    }
+    await sb.rpc('jmtchat_register_device', { target_id: existing.id });
     saveSession(me.id);
     toast("Bienvenue à nouveau, " + (me.profile_name||me.full_name));
     enterApp();
@@ -862,13 +857,7 @@ async function tryAutoLogin(){
   const { data } = await sb.from('jmtchat_profiles').select('*').eq('id', sid).maybeSingle();
   if(data){
     me = data;
-    if(!me.auth_user_id){
-      const { data: { user } } = await sb.auth.getUser();
-      if(user){
-        await sb.from('jmtchat_profiles').update({ auth_user_id: user.id }).eq('id', me.id);
-        me.auth_user_id = user.id;
-      }
-    }
+    await sb.rpc('jmtchat_register_device', { target_id: me.id });
     enterApp();
     return true;
   }
