@@ -587,7 +587,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.19.5";
+const APP_VERSION = "2026.07.19.6";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2471,7 +2471,8 @@ function renderDirectory(){
       </div>`;
   }).join('');
 }
-function openAddToDirectory(){
+async function openAddToDirectory(){
+  await loadDirectory();
   const sheet = document.createElement('div');
   sheet.className = 'sheet';
   sheet.innerHTML = `
@@ -2528,7 +2529,12 @@ async function insertUserToDirectory(profileId){
   const { error } = await sb.from('jmtchat_directory').insert({
     owner_id: me.id, contact_profile_id: p.id, contact_name: p.profile_name || p.full_name, contact_phone: p.phone
   });
-  if(error){ toast("Erreur : " + error.message); return; }
+  if(error){
+    toast(error.message.includes('duplicate') ? "Ce contact est déjà dans ton répertoire." : "Erreur : " + error.message);
+    document.querySelector('.sheet')?.remove();
+    loadDirectory();
+    return;
+  }
   document.querySelector('.sheet')?.remove();
   toast(`${p.profile_name || p.full_name} ajouté(e) à ton répertoire !`);
   loadDirectory();
