@@ -223,7 +223,7 @@
   .status-my img{width:54px;height:54px;border-radius:50%;object-fit:cover;background:#dfe3e8;border:2px solid var(--gold);}
   .status-ring{border:3px solid var(--blue);}
   .status-card{
-    display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #eef0f3;cursor:pointer;
+    display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #eef0f3;cursor:pointer;background:var(--card);
   }
   .status-card img{width:50px;height:50px;border-radius:50%;object-fit:cover;border:3px solid var(--blue);}
   .status-view{
@@ -983,12 +983,40 @@ async function loadMessages(){
 function renderMessages(msgs){
   const box = document.getElementById('conv-messages');
   if(!msgs.length){ box.innerHTML = '<div class="empty-state" style="color:#5b6b82;">Aucun message. Dites bonjour 👋</div>'; return; }
-  box.innerHTML = msgs.map(m => `
+  box.innerHTML = msgs.map(m => {
+    if(m.msg_type === 'system') return renderSystemMessage(m);
+    return `
     <div class="bubble ${m.sender_id===me.id?'mine':'theirs'}" ${m.is_deleted?'':`onclick="openMessageActions('${m.id}')"`} style="${m.is_deleted?'':'cursor:pointer;'}">
       ${m.is_deleted ? '<em style="color:var(--muted);">🚫 Message supprimé</em>' : renderBubbleContent(m)}
       <span class="time">${m.edited && !m.is_deleted ? '<em>modifié</em> · ' : ''}${fmtTime(m.created_at)}${(m.sender_id===me.id && currentConv.type==='user') ? ' '+ticksHtml(m.is_read) : ''}</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   box.scrollTop = box.scrollHeight;
+}
+function renderSystemMessage(m){
+  let text = m.content;
+  try{
+    const d = JSON.parse(m.content);
+    if(d.event === 'member_added'){
+      text = (d.member_id === me.id)
+        ? `Vous avez été ajouté(e) par ${d.by_name} dans le groupe "${d.group_name}".`
+        : `${d.member_name} a été ajouté(e) par ${d.by_name}.`;
+    }
+  }catch(e){ /* contenu déjà en texte simple, on l'affiche tel quel */ }
+  return `<div style="text-align:center;margin:10px 0;">
+    <span style="background:rgba(0,0,0,.06);color:var(--muted);font-size:12px;padding:5px 12px;border-radius:12px;display:inline-block;">${escapeHtml(text)}</span>
+  </div>`;
+}
+async function sendGroupSystemMessage(groupId, payload){
+  try{
+    await sb.from('jmtchat_messages').insert({
+      conversation_id: 'group_' + groupId,
+      sender_id: me.id,
+      receiver_id: null,
+      content: JSON.stringify(payload),
+      msg_type: 'system'
+    });
+  }catch(e){ console.warn("Message système non envoyé", e); }
 }
 async function sendMessage(){
   const input = document.getElementById('msg-input');
@@ -1393,7 +1421,10 @@ async function loadStatuses(){
       </div>
       <div class="info">
         <div class="name">${g.profile?.profile_name || g.profile?.full_name || 'Utilisateur'}</div>
-        <div class="last">${count>1 ? count+' statuts' : statusPreview(last)} · ${fmtTime(last.created_at)}</div>
+        <div class="last">
+          ${last.status_type==='text' ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${last.bg_color||'#0b1b3a'};margin-right:5px;"></span>` : ''}
+          ${count>1 ? count+' statuts' : statusPreview(last)} · ${fmtTime(last.created_at)}
+        </div>
       </div>
       ${isMine ? '<div style="font-size:12px;color:var(--muted);">👁️ voir</div>' : ''}
     </div>`;
@@ -1403,17 +1434,28 @@ function statusPreview(s){
   if(s.status_type==='image') return '📷 Photo';
   if(s.status_type==='video') return '🎬 Vidéo';
   if(s.status_type==='voice') return '🎤 Vocal';
-  return 'Texte';
+  const txt = (s.content||'').trim();
+  return txt.length>40 ? txt.slice(0,40)+'…' : (txt || 'Texte');
 }
+const STATUS_COLORS = ['#0b1b3a','#7c2d92','#b8452f','#1f6f5c','#2b4c7e','#8a2be2','#c2410c','#0f766e','#9d174d','#134e4a'];
+let statusBgColor = STATUS_COLORS[0];
 function openAddStatus(){
   statusMediaItems = [];
+  statusBgColor = STATUS_COLORS[Math.floor(Math.random()*STATUS_COLORS.length)];
   const sheet = document.createElement('div');
   sheet.className='sheet';
   sheet.innerHTML = `
     <div class="sheet-content">
       <div class="sheet-header"><h3>Ajouter un statut</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
       <div class="sheet-body">
-        <div class="field"><label>Votre texte (optionnel si vous ajoutez un média)</label><textarea id="status-text" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;"></textarea></div>
+        <div class="field">
+          <label>Votre texte (optionnel si vous ajoutez un média)</label>
+          <div id="status-text-canvas" style="position:relative;border-radius:12px;padding:20px;margin-top:6px;transition:background .2s;background:${statusBgColor};">
+            <textarea id="status-text" rows="3" placeholder="Écrivez quelque chose..." style="width:100%;background:transparent;border:none;outline:none;resize:none;color:#fff;font-size:18px;font-weight:600;text-align:center;"></textarea>
+            <button type="button" onclick="cycleStatusColor()" title="Changer la couleur" style="position:absolute;top:8px;right:8px;background:rgba(255,255,255,.25);border:none;border-radius:50%;width:30px;height:30px;font-size:15px;cursor:pointer;">🎨</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Cette couleur ne s'applique qu'aux statuts en texte seul.</div>
+        </div>
         <div style="display:flex;gap:14px;margin:14px 0;">
           <div style="text-align:center;">
             <button class="icon-btn" id="status-voice-btn" style="font-size:24px;" onclick="toggleStatusVoiceRecording()">🎙️</button>
@@ -1435,6 +1477,13 @@ function openAddStatus(){
   document.body.appendChild(sheet);
 }
 let statusMediaItems = []; // [{file, type}] — permet d'envoyer plusieurs statuts en une fois
+function cycleStatusColor(){
+  let next;
+  do{ next = STATUS_COLORS[Math.floor(Math.random()*STATUS_COLORS.length)]; } while(next === statusBgColor && STATUS_COLORS.length>1);
+  statusBgColor = next;
+  const canvas = document.getElementById('status-text-canvas');
+  if(canvas) canvas.style.background = statusBgColor;
+}
 function pickStatusMedia(type){
   triggerFileInput(type==='image' ? 'image/*' : 'video/*', null, async(files)=>{
     files.forEach(file => statusMediaItems.push({ file, type }));
@@ -1515,7 +1564,7 @@ async function submitStatus(){
       }
     } else {
       if(btn) btn.textContent = 'Publication...';
-      await sb.from('jmtchat_statuses').insert({ profile_id: me.id, status_type:'text', content:text, bg_color:'#0b1b3a' });
+      await sb.from('jmtchat_statuses').insert({ profile_id: me.id, status_type:'text', content:text, bg_color: statusBgColor });
     }
     const count = statusMediaItems.length || 1;
     document.querySelector('.sheet')?.remove();
@@ -1579,9 +1628,12 @@ function renderStoryFrame(index){
       <div class="seg"><div class="fill" id="sv-seg-${i}" style="${i<index?'width:100%;':'width:0%;'}"></div></div>`).join('');
   }
   let mediaHtml = '', caption = '', duration = 5000;
+  const svContent = document.querySelector('#story-viewer .sv-content');
   if(s.status_type === 'text'){
+    if(svContent) svContent.style.background = s.bg_color || '#0b1b3a';
     mediaHtml = `<div style="font-size:22px;font-weight:600;text-align:center;padding:20px;color:#fff;">${escapeHtml(s.content)}</div>`;
   } else {
+    if(svContent) svContent.style.background = 'transparent';
     let data = {};
     try{ data = JSON.parse(s.content); }catch(e){}
     caption = data.caption || '';
@@ -1597,11 +1649,15 @@ function renderStoryFrame(index){
   if(controls){
     controls.innerHTML = isMine ? `
       <div style="background:#fff;border-radius:14px 14px 0 0;padding:14px;">
+        <div id="sv-views-count" style="font-weight:700;margin-bottom:10px;cursor:pointer;display:flex;align-items:center;gap:6px;" onclick="showStatusViewers('${s.id}')">
+          <span>👁️ ...</span><span style="font-size:12px;font-weight:400;color:var(--muted);">voir qui a vu</span>
+        </div>
         <div style="display:flex;gap:10px;">
           ${s.status_type==='text' ? `<button class="btn ghost" style="flex:1;" onclick="editStatus('${s.id}')">✏️ Modifier</button>` : ''}
           <button class="btn" style="flex:1;background:var(--danger);" onclick="deleteStatus('${s.id}')">🗑️ Supprimer</button>
         </div>
       </div>` : '';
+    if(isMine) loadStatusViewCount(s.id, index);
   }
   const mediaEl = document.getElementById('sv-media');
   if(mediaEl && (s.status_type==='video' || s.status_type==='voice')){
@@ -1636,6 +1692,36 @@ function storyNext(){
 function storyPrev(){
   if(!storyViewer || storyViewer.index === 0) return;
   renderStoryFrame(storyViewer.index - 1);
+}
+async function loadStatusViewCount(statusId, forIndex){
+  const { count } = await sb.from('jmtchat_status_views').select('*', { count:'exact', head:true }).eq('status_id', statusId);
+  // évite d'écraser l'affichage si l'utilisateur a déjà changé de statut entre-temps
+  if(storyViewer && storyViewer.index === forIndex){
+    const el = document.getElementById('sv-views-count');
+    if(el){
+      const n = count || 0;
+      el.querySelector('span').textContent = `👁️ ${n} vue${n===1?'':'s'}`;
+    }
+  }
+}
+async function showStatusViewers(statusId){
+  const { data: views } = await sb.from('jmtchat_status_views')
+    .select('*, jmtchat_profiles(profile_name, full_name, avatar_url)')
+    .eq('status_id', statusId);
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>👁️ ${views?.length||0} vue(s)</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        ${(views||[]).map(v => `
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 0;">
+            <img src="${v.jmtchat_profiles?.avatar_url || initialsAvatar('U')}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;">
+            <span style="font-size:14px;">${v.jmtchat_profiles?.profile_name || v.jmtchat_profiles?.full_name || 'Utilisateur'}</span>
+          </div>`).join('') || '<div style="font-size:13px;color:var(--muted);">Personne n\'a encore vu ce statut.</div>'}
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
 }
 function editStatus(statusId){
   const s = statusesById[statusId];
@@ -1866,6 +1952,15 @@ async function finalizeGroup(name){
   if(error){ toast("Erreur : " + error.message); return; }
   const rows = [{ group_id: group.id, profile_id: me.id, is_admin:true }, ...newGroupSelectedMembers.map(id => ({ group_id: group.id, profile_id:id, is_admin:false }))];
   await sb.from('jmtchat_group_members').insert(rows);
+  const byName = me.profile_name || me.full_name || 'Un administrateur';
+  for(const memberId of newGroupSelectedMembers){
+    const p = allProfiles.find(x=>x.id===memberId);
+    await sendGroupSystemMessage(group.id, {
+      event:'member_added', by_id: me.id, by_name: byName,
+      member_id: memberId, member_name: p?.profile_name || p?.full_name || 'Utilisateur',
+      group_name: name
+    });
+  }
   document.querySelector('.sheet').remove();
   newGroupAvatarFile = null;
   toast("Groupe créé !");
@@ -1992,8 +2087,18 @@ async function confirmAddMembers(){
   if(!newGroupSelectedMembers.length){ toast("Sélectionne au moins une personne."); return; }
   const rows = newGroupSelectedMembers.map(id => ({ group_id: currentConv.id, profile_id:id, is_admin:false }));
   await sb.from('jmtchat_group_members').insert(rows);
+  const byName = me.profile_name || me.full_name || 'Un administrateur';
+  for(const memberId of newGroupSelectedMembers){
+    const p = allProfiles.find(x=>x.id===memberId);
+    await sendGroupSystemMessage(currentConv.id, {
+      event:'member_added', by_id: me.id, by_name: byName,
+      member_id: memberId, member_name: p?.profile_name || p?.full_name || 'Utilisateur',
+      group_name: currentConv.name
+    });
+  }
   document.querySelector('.sheet').remove();
   toast("Membres ajoutés !");
+  if(document.getElementById('conv-messages') && currentConv.type==='group') loadMessages();
 }
 async function openPromoteAdmin(){
   document.getElementById('group-dropdown').classList.add('hidden');
