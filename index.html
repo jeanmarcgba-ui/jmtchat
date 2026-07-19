@@ -1338,7 +1338,8 @@ async function loadStatuses(){
   const { data } = await sb.from('jmtchat_statuses')
     .select('*, jmtchat_profiles(profile_name, full_name, avatar_url)')
     .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending:false });
+    .order('created_at', { ascending:false })
+    .limit(100);
   statusesById = {};
   (data||[]).forEach(s => statusesById[s.id] = s);
   const list = document.getElementById('status-list');
@@ -1382,7 +1383,7 @@ function openAddStatus(){
           </div>
         </div>
         <div id="status-media-preview"></div>
-        <button class="btn" onclick="submitStatus()">Publier</button>
+        <button class="btn" id="status-submit-btn" onclick="submitStatus()">Publier</button>
       </div>
     </div>`;
   document.body.appendChild(sheet);
@@ -1431,9 +1432,15 @@ async function toggleStatusVoiceRecording(){
     statusMediaRecorder.stop();
   }
 }
+let statusSubmitting = false;
 async function submitStatus(){
+  if(statusSubmitting) return; // empêche le double-clic / double-tap
   const text = document.getElementById('status-text').value.trim();
   if(!statusMediaFile && !text){ toast("Écris quelque chose ou ajoute un média."); return; }
+  statusSubmitting = true;
+  const btn = document.getElementById('status-submit-btn');
+  if(btn){ btn.disabled = true; btn.textContent = statusMediaFile ? 'Envoi en cours...' : 'Publication...'; }
+  if(statusMediaFile) toast("Envoi du média, veuillez patienter...");
   try{
     if(statusMediaFile){
       const url = await uploadToChat(statusMediaFile, 'statuses');
@@ -1444,11 +1451,16 @@ async function submitStatus(){
     } else {
       await sb.from('jmtchat_statuses').insert({ profile_id: me.id, status_type:'text', content:text, bg_color:'#0b1b3a' });
     }
-    document.querySelector('.sheet').remove();
+    document.querySelector('.sheet')?.remove();
     statusMediaFile = null; statusMediaType = null;
     toast("Statut publié !");
     loadStatuses();
-  }catch(e){ toast("Erreur de publication : " + e.message); }
+  }catch(e){
+    toast("Erreur de publication : " + e.message);
+    if(btn){ btn.disabled = false; btn.textContent = 'Publier'; }
+  } finally {
+    statusSubmitting = false;
+  }
 }
 async function openViewStatus(statusId){
   const s = statusesById[statusId];
@@ -1515,21 +1527,35 @@ function editStatus(statusId){
     </div>`;
   document.body.appendChild(sheet);
 }
+let statusEditSubmitting = false;
 async function saveEditedStatus(statusId){
+  if(statusEditSubmitting) return;
   const newText = document.getElementById('edit-status-text').value.trim();
   if(!newText){ toast("Le statut ne peut pas être vide."); return; }
-  const { error } = await sb.from('jmtchat_statuses').update({ content:newText }).eq('id', statusId);
-  if(error){ toast("Erreur : " + error.message); return; }
-  document.querySelector('.sheet').remove();
-  toast("Statut modifié !");
-  loadStatuses();
+  statusEditSubmitting = true;
+  try{
+    const { error } = await sb.from('jmtchat_statuses').update({ content:newText }).eq('id', statusId);
+    if(error){ toast("Erreur : " + error.message); return; }
+    document.querySelector('.sheet')?.remove();
+    toast("Statut modifié !");
+    loadStatuses();
+  } finally {
+    statusEditSubmitting = false;
+  }
 }
+let statusDeleting = false;
 async function deleteStatus(statusId){
-  const { error } = await sb.from('jmtchat_statuses').delete().eq('id', statusId);
-  if(error){ toast("Erreur : " + error.message); return; }
-  document.querySelector('.status-view')?.remove();
-  toast("Statut supprimé.");
-  loadStatuses();
+  if(statusDeleting) return;
+  statusDeleting = true;
+  try{
+    const { error } = await sb.from('jmtchat_statuses').delete().eq('id', statusId);
+    if(error){ toast("Erreur : " + error.message); return; }
+    document.querySelector('.status-view')?.remove();
+    toast("Statut supprimé.");
+    loadStatuses();
+  } finally {
+    statusDeleting = false;
+  }
 }
 
 /* ---------------- Mon profil : modifier / supprimer ---------------- */
