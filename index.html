@@ -941,10 +941,22 @@ async function loadDiscussions(){
 function convIdFor(otherId){
   return [me.id, otherId].sort().join('_');
 }
+function conversationStatusLabel(p){
+  if(!p) return '';
+  if(p.is_online) return '🟢 En ligne';
+  if(p.last_seen){
+    const d = new Date(p.last_seen);
+    const jour = d.toLocaleDateString('fr-FR', { day:'2-digit', month:'long' });
+    const heure = d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
+    return `Était en ligne le ${jour} à ${heure}`;
+  }
+  return 'Hors ligne';
+}
 async function openConversation(type, id){
-  let name, avatar, convId;
+  let name, avatar, convId, otherProfile = null;
   if(type === 'user'){
     const p = allProfiles.find(x=>x.id===id);
+    otherProfile = p;
     name = p.profile_name || p.full_name; avatar = p.avatar_url || initialsAvatar(name);
     convId = convIdFor(id);
     document.getElementById('conv-menu-btn').classList.add('hidden');
@@ -956,7 +968,7 @@ async function openConversation(type, id){
   }
   currentConv = { type, id, name, avatar, convId };
   document.getElementById('conv-name').textContent = name;
-  document.getElementById('conv-status').textContent = type==='user' ? 'Discussion privée' : 'Groupe';
+  document.getElementById('conv-status').textContent = type==='user' ? conversationStatusLabel(otherProfile) : 'Groupe';
   document.getElementById('conv-avatar').src = avatar;
   document.getElementById('screen-app').classList.remove('active');
   document.getElementById('screen-conv').classList.add('active');
@@ -1001,6 +1013,10 @@ function renderSystemMessage(m){
       text = (d.member_id === me.id)
         ? `Vous avez été ajouté(e) par ${d.by_name} dans le groupe "${d.group_name}".`
         : `${d.member_name} a été ajouté(e) par ${d.by_name}.`;
+    } else if(d.event === 'member_removed'){
+      text = (d.member_id === me.id)
+        ? `Vous avez été retiré(e) par ${d.by_name} du groupe "${d.group_name}".`
+        : `${d.member_name} a été retiré(e) par ${d.by_name}.`;
     }
   }catch(e){ /* contenu déjà en texte simple, on l'affiche tel quel */ }
   return `<div style="text-align:center;margin:10px 0;">
@@ -1133,6 +1149,11 @@ function subscribeRealtime(){
         me.is_blocked = true;
         lockDownBlockedUser();
       }
+      const idx = allProfiles.findIndex(x=>x.id===payload.new.id);
+      if(idx>-1) allProfiles[idx] = payload.new;
+      if(currentConv && currentConv.type==='user' && currentConv.id===payload.new.id){
+        document.getElementById('conv-status').textContent = conversationStatusLabel(payload.new);
+      }
       loadContacts();
     })
     .on('postgres_changes', { event:'DELETE', schema:'public', table:'jmtchat_profiles' }, payload => {
@@ -1162,8 +1183,14 @@ function subscribeRealtime(){
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_group_members' }, () => {
       loadGroups();
     })
-    .on('postgres_changes', { event:'DELETE', schema:'public', table:'jmtchat_group_members' }, () => {
+    .on('postgres_changes', { event:'DELETE', schema:'public', table:'jmtchat_group_members' }, payload => {
       loadGroups();
+      if(payload.old.profile_id === me.id && currentConv && currentConv.type==='group' && currentConv.id === payload.old.group_id){
+        toast("Vous avez été retiré(e) de ce groupe.");
+        closeConversation();
+      } else if(currentConv && currentConv.type==='group' && currentConv.id === payload.old.group_id){
+        loadMessages();
+      }
     })
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'jmtchat_directory' }, () => {
       if(document.getElementById('tab-repertoire')?.classList.contains('active')) loadDirectory();
@@ -2054,6 +2081,15 @@ async function openMembersList(){
   document.body.appendChild(sheet);
 }
 async function removeGroupMember(memberRowId, name){
+  const { data: rowBefore } = await sb.from('jmtchat_group_members').select('profile_id').eq('id', memberRowId).single();
+  const byName = me.profile_name || me.full_name || 'Un administrateur';
+  if(rowBefore){
+    await sendGroupSystemMessage(currentConv.id, {
+      event:'member_removed', by_id: me.id, by_name: byName,
+      member_id: rowBefore.profile_id, member_name: name,
+      group_name: currentConv.name
+    });
+  }
   const { error } = await sb.from('jmtchat_group_members').delete().eq('id', memberRowId);
   if(error){ toast("Erreur : " + error.message); return; }
   document.querySelector('.sheet').remove();
@@ -3198,7 +3234,15 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   checkForUpdate();
   setInterval(checkForUpdate, 5 * 60 * 1000);
   document.addEventListener('visibilitychange', ()=>{
-    if(document.visibilityState === 'visible') checkForUpdate();
+    if(document.visibilityState === 'visible'){
+      checkForUpdate();
+      if(me?.id) sb.from('jmtchat_profiles').update({ is_online:true, last_seen:new Date().toISOString() }).eq('id', me.id).then(()=>{});
+    } else {
+      if(me?.id) sb.from('jmtchat_profiles').update({ is_online:false, last_seen:new Date().toISOString() }).eq('id', me.id).then(()=>{});
+    }
+  });
+  window.addEventListener('pagehide', ()=>{
+    if(me?.id) sb.from('jmtchat_profiles').update({ is_online:false, last_seen:new Date().toISOString() }).eq('id', me.id).then(()=>{});
   });
   await ensureAuthSession();
   const ok = await tryAutoLogin();
