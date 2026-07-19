@@ -326,6 +326,19 @@
       <input id="inp-email" type="email" placeholder="exemple@mail.com">
     </div>
     <button class="btn" onclick="startVerification()">Continuer</button>
+    <div style="margin-top:16px;font-size:13px;color:var(--blue);cursor:pointer;text-decoration:underline;" onclick="openQrLoginScreen()">
+      💻 Déjà inscrit ? Se connecter avec un code QR
+    </div>
+  </div>
+
+  <div class="auth-card hidden" id="card-qr-login" style="text-align:center;">
+    <h2>Connexion par code QR</h2>
+    <p class="tag">Ouvre l'appareil photo de ton téléphone (là où tu es déjà connecté à JMTchat) et scanne ce code</p>
+    <div id="qr-code-box" style="margin:16px auto;width:220px;height:220px;display:flex;align-items:center;justify-content:center;background:#f4f6fb;border-radius:12px;">
+      <span style="color:var(--muted);font-size:13px;">Génération du code...</span>
+    </div>
+    <div id="qr-status" style="font-size:13px;color:var(--muted);">En attente du scan...</div>
+    <button class="btn ghost" style="margin-top:16px;" onclick="showOnboardingStep1()">Retour</button>
   </div>
 
   <div class="auth-card hidden" id="card-step2">
@@ -455,6 +468,15 @@
         <div class="section-title">Verrouillage de l'application</div>
         <div id="lock-settings-box" style="padding:16px;"></div>
       </div>
+      <div id="account-section">
+        <div class="section-title">Compte</div>
+        <div style="padding:16px;">
+          <div style="background:#fff;border-radius:12px;padding:14px;">
+            <p style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Pratique si tu utilises un ordinateur ou téléphone partagé, ou pour changer de compte.</p>
+            <button class="btn" style="background:var(--danger);" onclick="confirmLogout()">🚪 Se déconnecter</button>
+          </div>
+        </div>
+      </div>
       <div class="section-title">À propos du créateur</div>
       <div id="creator-info-box" style="padding:16px;"></div>
       <div id="broadcast-section" class="hidden">
@@ -565,7 +587,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.19.2";
+const APP_VERSION = "2026.07.19.4";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -667,6 +689,73 @@ function backToStep1(){
   document.getElementById('card-step2').classList.add('hidden');
   document.getElementById('card-step1').classList.remove('hidden');
 }
+
+/* ---------------- Connexion par code QR (façon WhatsApp Web) ---------------- */
+let qrSessionToken = null;
+let qrPollInterval = null;
+let qrExpireTimeout = null;
+function showOnboardingStep1(){
+  document.getElementById('card-qr-login').classList.add('hidden');
+  document.getElementById('card-step1').classList.remove('hidden');
+  if(qrPollInterval){ clearInterval(qrPollInterval); qrPollInterval = null; }
+  if(qrExpireTimeout){ clearTimeout(qrExpireTimeout); qrExpireTimeout = null; }
+}
+async function openQrLoginScreen(){
+  document.getElementById('card-step1').classList.add('hidden');
+  document.getElementById('card-qr-login').classList.remove('hidden');
+  await generateNewQrCode();
+}
+async function generateNewQrCode(){
+  document.getElementById('qr-status').textContent = 'En attente du scan...';
+  document.getElementById('qr-code-box').innerHTML = '<span style="color:var(--muted);font-size:13px;">Génération du code...</span>';
+  const { data, error } = await sb.from('jmtchat_qr_sessions').insert({}).select().single();
+  if(error){
+    document.getElementById('qr-code-box').innerHTML = '<span style="color:var(--danger);font-size:13px;">Erreur de génération.</span>';
+    return;
+  }
+  qrSessionToken = data.token;
+  const loginUrl = `${location.origin}${location.pathname}?qrlogin=${data.token}`;
+  const qrImgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(loginUrl)}`;
+  document.getElementById('qr-code-box').innerHTML = `<img src="${qrImgUrl}" style="width:220px;height:220px;border-radius:8px;" alt="Code QR">`;
+  if(qrPollInterval) clearInterval(qrPollInterval);
+  qrPollInterval = setInterval(checkQrClaimed, 2000);
+  if(qrExpireTimeout) clearTimeout(qrExpireTimeout);
+  qrExpireTimeout = setTimeout(()=>{
+    clearInterval(qrPollInterval);
+    document.getElementById('qr-status').innerHTML = 'Code expiré. <span style="color:var(--blue);text-decoration:underline;cursor:pointer;" onclick="generateNewQrCode()">Générer un nouveau code</span>';
+  }, 3 * 60 * 1000);
+}
+async function checkQrClaimed(){
+  if(!qrSessionToken) return;
+  const { data } = await sb.from('jmtchat_qr_sessions').select('*').eq('token', qrSessionToken).maybeSingle();
+  if(data && data.claimed && data.profile_id){
+    clearInterval(qrPollInterval);
+    clearTimeout(qrExpireTimeout);
+    document.getElementById('qr-status').textContent = 'Connexion en cours...';
+    const { data: profile } = await sb.from('jmtchat_profiles').select('*').eq('id', data.profile_id).maybeSingle();
+    if(profile){
+      me = profile;
+      saveSession(me.id);
+      showOnboardingStep1();
+      enterApp();
+    }
+  }
+}
+async function claimQrLoginFromUrl(){
+  const params = new URLSearchParams(location.search);
+  const token = params.get('qrlogin');
+  if(!token) return;
+  try{
+    const { error } = await sb.from('jmtchat_qr_sessions')
+      .update({ profile_id: me.id, claimed: true })
+      .eq('token', token)
+      .eq('claimed', false)
+      .gt('expires_at', new Date().toISOString());
+    if(!error) toast("💻 Ordinateur connecté avec succès !");
+  }catch(e){ console.warn("Échec de la connexion QR", e); }
+  history.replaceState({}, '', location.pathname);
+}
+
 async function verifyCode(){
   const vals = Array.from(document.querySelectorAll('.code-in')).map(i=>i.value).join('');
   if(vals.length!==4){ toast("Entrez les 4 chiffres."); return; }
@@ -744,6 +833,28 @@ async function finishProfile(){
 function saveSession(id){ localStorage.setItem('jmtchat_session', id); }
 function getSession(){ return localStorage.getItem('jmtchat_session'); }
 function clearSession(){ localStorage.removeItem('jmtchat_session'); }
+function confirmLogout(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="auth-card" style="max-width:340px;">
+      <h2>Se déconnecter</h2>
+      <p class="tag">Tu pourras te reconnecter avec ce compte ou un autre à tout moment.</p>
+      <button class="btn" style="background:var(--danger);" onclick="logoutNow()">Oui, me déconnecter</button>
+      <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+function logoutNow(){
+  if(me && me.id && !me.is_creator){
+    sb.from('jmtchat_profiles').update({ is_online:false, last_seen:new Date().toISOString() }).eq('id', me.id).then(()=>{});
+  }
+  unsubscribeAllRealtime();
+  clearSession();
+  me = null;
+  previousProfile = null;
+  location.reload();
+}
 
 async function tryAutoLogin(){
   const sid = getSession();
@@ -838,6 +949,7 @@ async function enterApp(){
     subscribeCallChannel();
     checkPushBanner();
     if(!me.is_blocked) checkPendingIncomingCall();
+    if(location.search.includes('qrlogin=')) claimQrLoginFromUrl();
     if(me.is_blocked){
       lockDownBlockedUser();
     } else {
