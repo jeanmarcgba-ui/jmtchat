@@ -232,6 +232,24 @@
   .status-view .sv-header{display:flex;align-items:center;gap:10px;padding:14px;color:#fff;}
   .status-view .sv-header img{width:36px;height:36px;border-radius:50%;object-fit:cover;}
   .status-view .sv-content{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;color:#fff;font-size:22px;font-weight:600;}
+  .status-card .avatar-wrap{position:relative;flex-shrink:0;}
+  .status-count-badge{
+    position:absolute;bottom:-2px;right:-2px;background:var(--blue);color:#fff;font-size:10px;font-weight:700;
+    min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    padding:0 4px;border:2px solid var(--card);
+  }
+  .sv-progress{display:flex;gap:4px;padding:10px 14px 0;}
+  .sv-progress .seg{flex:1;height:3px;background:rgba(255,255,255,.3);border-radius:2px;overflow:hidden;}
+  .sv-progress .seg .fill{display:block;height:100%;width:0%;background:#fff;}
+  .sv-nav-zone{position:absolute;top:0;bottom:0;width:35%;z-index:2;}
+  .sv-nav-zone.left{left:0;}
+  .sv-nav-zone.right{right:0;}
+  .status-media-thumb{position:relative;display:inline-block;margin:4px;}
+  .status-media-thumb img, .status-media-thumb video{width:70px;height:70px;object-fit:cover;border-radius:8px;display:block;}
+  .status-media-thumb .remove-thumb{
+    position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;width:20px;height:20px;
+    border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;
+  }
 
   .fab{
     position:absolute;right:18px;bottom:78px;background:var(--blue);color:#fff;border:none;
@@ -1094,7 +1112,14 @@ function subscribeRealtime(){
       if(document.getElementById('tab-repertoire')?.classList.contains('active')) loadDirectory();
     })
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_statuses' }, () => {
-      if(document.getElementById('tab-actu').classList.contains('active')) loadStatuses();
+      if(document.getElementById('tab-actu')?.classList.contains('active')) loadStatuses();
+    })
+    .on('postgres_changes', { event:'DELETE', schema:'public', table:'jmtchat_statuses' }, payload => {
+      const deletedId = payload.old.id;
+      const wasBeingViewed = storyViewer && storyViewer.statuses[storyViewer.index]?.id === deletedId;
+      removeStatusFromViewerAndCache(deletedId);
+      if(document.getElementById('tab-actu')?.classList.contains('active')) loadStatuses();
+      if(wasBeingViewed) toast("Ce statut a été supprimé.");
     })
     .on('postgres_changes', { event:'DELETE', schema:'public', table:'jmtchat_groups' }, payload => {
       loadGroups();
@@ -1137,7 +1162,7 @@ async function sendMediaMessage(msg_type, contentObj){
   });
   if(error) toast("Erreur d'envoi : " + error.message);
 }
-function triggerFileInput(accept, capture, onFile){
+function triggerFileInput(accept, capture, onFile, multiple){
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = accept;
@@ -1145,10 +1170,14 @@ function triggerFileInput(accept, capture, onFile){
   input.style.top = '-1000px';
   input.style.left = '-1000px';
   if(capture) input.capture = capture;
+  if(multiple) input.multiple = true;
   document.body.appendChild(input);
   input.onchange = async (e)=>{
-    const file = e.target.files[0];
-    if(file) await onFile(file);
+    const files = Array.from(e.target.files || []);
+    if(files.length){
+      if(multiple) await onFile(files);
+      else await onFile(files[0]);
+    }
     input.remove();
   };
   input.click();
@@ -1334,25 +1363,41 @@ function callPlaceholder(type){ toast((type==='audio'?"📞 Appel audio":"🎥 A
 
 /* ---------------- Actualité (statuts) ---------------- */
 let statusesById = {};
+let statusGroupsByUser = {}; // profileId -> { profile, statuses:[...] triés du plus ancien au plus récent }
 async function loadStatuses(){
   const { data } = await sb.from('jmtchat_statuses')
     .select('*, jmtchat_profiles(profile_name, full_name, avatar_url)')
     .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending:false })
-    .limit(100);
+    .order('created_at', { ascending:true })
+    .limit(200);
   statusesById = {};
-  (data||[]).forEach(s => statusesById[s.id] = s);
+  statusGroupsByUser = {};
+  (data||[]).forEach(s => {
+    statusesById[s.id] = s;
+    if(!statusGroupsByUser[s.profile_id]) statusGroupsByUser[s.profile_id] = { profile: s.jmtchat_profiles, statuses: [] };
+    statusGroupsByUser[s.profile_id].statuses.push(s);
+  });
   const list = document.getElementById('status-list');
-  if(!data || !data.length){ list.innerHTML = '<div class="empty-state">Aucun statut pour le moment.</div>'; return; }
-  list.innerHTML = data.map(s => `
-    <div class="status-card" onclick="openViewStatus('${s.id}')">
-      <img src="${s.jmtchat_profiles?.avatar_url || initialsAvatar('U')}">
-      <div class="info">
-        <div class="name">${s.jmtchat_profiles?.profile_name || s.jmtchat_profiles?.full_name || 'Utilisateur'}</div>
-        <div class="last">${statusPreview(s)} · ${fmtTime(s.created_at)}</div>
+  const groups = Object.entries(statusGroupsByUser).map(([profileId, g]) => ({ profileId, ...g }));
+  if(!groups.length){ list.innerHTML = '<div class="empty-state">Aucun statut pour le moment.</div>'; return; }
+  groups.sort((a,b) => new Date(b.statuses[b.statuses.length-1].created_at) - new Date(a.statuses[a.statuses.length-1].created_at));
+  list.innerHTML = groups.map(g => {
+    const last = g.statuses[g.statuses.length-1];
+    const count = g.statuses.length;
+    const isMine = g.profileId === me.id;
+    return `
+    <div class="status-card" onclick="openStoryViewer('${g.profileId}')">
+      <div class="avatar-wrap">
+        <img src="${g.profile?.avatar_url || initialsAvatar('U')}">
+        ${count>1 ? `<div class="status-count-badge">${count}</div>` : ''}
       </div>
-      ${s.profile_id===me.id ? '<div style="font-size:12px;color:var(--muted);">👁️ voir</div>' : ''}
-    </div>`).join('');
+      <div class="info">
+        <div class="name">${g.profile?.profile_name || g.profile?.full_name || 'Utilisateur'}</div>
+        <div class="last">${count>1 ? count+' statuts' : statusPreview(last)} · ${fmtTime(last.created_at)}</div>
+      </div>
+      ${isMine ? '<div style="font-size:12px;color:var(--muted);">👁️ voir</div>' : ''}
+    </div>`;
+  }).join('');
 }
 function statusPreview(s){
   if(s.status_type==='image') return '📷 Photo';
@@ -1361,6 +1406,7 @@ function statusPreview(s){
   return 'Texte';
 }
 function openAddStatus(){
+  statusMediaItems = [];
   const sheet = document.createElement('div');
   sheet.className='sheet';
   sheet.innerHTML = `
@@ -1375,11 +1421,11 @@ function openAddStatus(){
           </div>
           <div style="text-align:center;">
             <button class="icon-btn" style="font-size:24px;" onclick="pickStatusMedia('image')">🖼️</button>
-            <div style="font-size:11px;color:var(--muted);">Photo</div>
+            <div style="font-size:11px;color:var(--muted);">Photo(s)</div>
           </div>
           <div style="text-align:center;">
             <button class="icon-btn" style="font-size:24px;" onclick="pickStatusMedia('video')">🎬</button>
-            <div style="font-size:11px;color:var(--muted);">Vidéo</div>
+            <div style="font-size:11px;color:var(--muted);">Vidéo(s)</div>
           </div>
         </div>
         <div id="status-media-preview"></div>
@@ -1388,19 +1434,36 @@ function openAddStatus(){
     </div>`;
   document.body.appendChild(sheet);
 }
-let statusMediaFile = null;
-let statusMediaType = null;
+let statusMediaItems = []; // [{file, type}] — permet d'envoyer plusieurs statuts en une fois
 function pickStatusMedia(type){
-  triggerFileInput(type==='image' ? 'image/*' : 'video/*', null, async(file)=>{
-    statusMediaFile = file;
-    statusMediaType = type;
-    const preview = document.getElementById('status-media-preview');
-    if(preview){
-      preview.innerHTML = type==='image'
-        ? `<img src="${URL.createObjectURL(file)}" style="max-width:100%;border-radius:10px;margin-bottom:10px;">`
-        : `<video src="${URL.createObjectURL(file)}" controls style="max-width:100%;border-radius:10px;margin-bottom:10px;"></video>`;
-    }
-  });
+  triggerFileInput(type==='image' ? 'image/*' : 'video/*', null, async(files)=>{
+    files.forEach(file => statusMediaItems.push({ file, type }));
+    renderStatusMediaPreview();
+  }, true);
+}
+function removeStatusMediaItem(idx){
+  statusMediaItems.splice(idx, 1);
+  renderStatusMediaPreview();
+}
+function renderStatusMediaPreview(){
+  const preview = document.getElementById('status-media-preview');
+  if(!preview) return;
+  if(!statusMediaItems.length){ preview.innerHTML=''; return; }
+  preview.innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;margin:0 0 4px;">
+      ${statusMediaItems.map((item, idx) => `
+        <div class="status-media-thumb">
+          ${item.type==='image'
+            ? `<img src="${URL.createObjectURL(item.file)}">`
+            : item.type==='video'
+              ? `<video src="${URL.createObjectURL(item.file)}" muted></video>`
+              : `<div style="width:70px;height:70px;border-radius:8px;background:#e8ebf0;display:flex;align-items:center;justify-content:center;font-size:24px;">🎤</div>`}
+          <div class="remove-thumb" onclick="removeStatusMediaItem(${idx})">✕</div>
+        </div>`).join('')}
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      ${statusMediaItems.length} média(s) sélectionné(s) — seront publiés comme statuts séparés que vos contacts pourront faire défiler.
+    </div>`;
 }
 let statusMediaRecorder = null;
 let statusAudioChunks = [];
@@ -1423,10 +1486,9 @@ async function toggleStatusVoiceRecording(){
       statusIsRecording = false;
       btn.textContent = '🎙️';
       const blob = new Blob(statusAudioChunks, { type:'audio/webm' });
-      statusMediaFile = new File([blob], `status_voice_${Date.now()}.webm`, { type:'audio/webm' });
-      statusMediaType = 'voice';
-      const preview = document.getElementById('status-media-preview');
-      if(preview) preview.innerHTML = `<audio src="${URL.createObjectURL(statusMediaFile)}" controls style="width:100%;margin-bottom:10px;"></audio>`;
+      const file = new File([blob], `status_voice_${Date.now()}.webm`, { type:'audio/webm' });
+      statusMediaItems.push({ file, type:'voice' });
+      renderStatusMediaPreview();
       statusMediaRecorder.stream.getTracks().forEach(t=>t.stop());
     };
     statusMediaRecorder.stop();
@@ -1436,24 +1498,29 @@ let statusSubmitting = false;
 async function submitStatus(){
   if(statusSubmitting) return; // empêche le double-clic / double-tap
   const text = document.getElementById('status-text').value.trim();
-  if(!statusMediaFile && !text){ toast("Écris quelque chose ou ajoute un média."); return; }
+  if(!statusMediaItems.length && !text){ toast("Écris quelque chose ou ajoute un média."); return; }
   statusSubmitting = true;
   const btn = document.getElementById('status-submit-btn');
-  if(btn){ btn.disabled = true; btn.textContent = statusMediaFile ? 'Envoi en cours...' : 'Publication...'; }
-  if(statusMediaFile) toast("Envoi du média, veuillez patienter...");
+  if(btn) btn.disabled = true;
   try{
-    if(statusMediaFile){
-      const url = await uploadToChat(statusMediaFile, 'statuses');
-      await sb.from('jmtchat_statuses').insert({
-        profile_id: me.id, status_type: statusMediaType,
-        content: JSON.stringify({ url, caption:text || null }), bg_color:'#0b1b3a'
-      });
+    if(statusMediaItems.length){
+      for(let i=0; i<statusMediaItems.length; i++){
+        if(btn) btn.textContent = `Envoi ${i+1}/${statusMediaItems.length}...`;
+        const item = statusMediaItems[i];
+        const url = await uploadToChat(item.file, 'statuses');
+        await sb.from('jmtchat_statuses').insert({
+          profile_id: me.id, status_type: item.type,
+          content: JSON.stringify({ url, caption:text || null }), bg_color:'#0b1b3a'
+        });
+      }
     } else {
+      if(btn) btn.textContent = 'Publication...';
       await sb.from('jmtchat_statuses').insert({ profile_id: me.id, status_type:'text', content:text, bg_color:'#0b1b3a' });
     }
+    const count = statusMediaItems.length || 1;
     document.querySelector('.sheet')?.remove();
-    statusMediaFile = null; statusMediaType = null;
-    toast("Statut publié !");
+    statusMediaItems = [];
+    toast(count>1 ? `${count} statuts publiés !` : "Statut publié !");
     loadStatuses();
   }catch(e){
     toast("Erreur de publication : " + e.message);
@@ -1462,59 +1529,118 @@ async function submitStatus(){
     statusSubmitting = false;
   }
 }
-async function openViewStatus(statusId){
-  const s = statusesById[statusId];
-  if(!s) return;
+
+/* ---- Lecteur de statuts façon "stories" (défilement comme WhatsApp) ---- */
+let storyViewer = null; // { profileId, statuses:[...], index, timer }
+function openStoryViewer(profileId){
+  const group = statusGroupsByUser[profileId];
+  if(!group || !group.statuses.length) return;
+  storyViewer = { profileId, statuses: group.statuses.slice(), index:0, timer:null };
+  const name = group.profile?.profile_name || group.profile?.full_name || (profileId===me.id ? (me.profile_name||me.full_name) : 'Utilisateur');
+  const v = document.createElement('div');
+  v.className='status-view';
+  v.id = 'story-viewer';
+  v.style.background = '#0b1b3a';
+  v.innerHTML = `
+    <div class="sv-progress" id="sv-progress"></div>
+    <div class="sv-header">
+      <span onclick="closeStoryViewer()" style="cursor:pointer;font-size:20px;">←</span>
+      <img src="${group.profile?.avatar_url || initialsAvatar('U')}">
+      <div>${name}</div>
+    </div>
+    <div class="sv-content" style="flex-direction:column;padding:16px;position:relative;overflow-y:auto;">
+      <div class="sv-nav-zone left" onclick="storyPrev()"></div>
+      <div class="sv-nav-zone right" onclick="storyNext()"></div>
+      <div id="sv-frame" style="width:100%;"></div>
+    </div>
+    <div id="sv-owner-controls"></div>`;
+  document.body.appendChild(v);
+  renderStoryFrame(0);
+}
+function closeStoryViewer(){
+  if(storyViewer?.timer) clearTimeout(storyViewer.timer);
+  document.getElementById('story-viewer')?.remove();
+  storyViewer = null;
+}
+function renderStoryFrame(index){
+  if(!storyViewer) return;
+  if(storyViewer.timer) clearTimeout(storyViewer.timer);
+  if(index < 0) return; // pas d'étape précédente au-delà de la première
+  if(index >= storyViewer.statuses.length){ closeStoryViewer(); return; }
+  storyViewer.index = index;
+  const s = storyViewer.statuses[index];
   const isMine = s.profile_id === me.id;
   if(!isMine){
-    await sb.from('jmtchat_status_views').upsert({ status_id: statusId, viewer_id: me.id }, { onConflict:'status_id,viewer_id' });
+    sb.from('jmtchat_status_views').upsert({ status_id: s.id, viewer_id: me.id }, { onConflict:'status_id,viewer_id' });
   }
-  let mediaHtml = '';
-  let caption = '';
+  const prog = document.getElementById('sv-progress');
+  if(prog){
+    prog.innerHTML = storyViewer.statuses.map((_, i) => `
+      <div class="seg"><div class="fill" id="sv-seg-${i}" style="${i<index?'width:100%;':'width:0%;'}"></div></div>`).join('');
+  }
+  let mediaHtml = '', caption = '', duration = 5000;
   if(s.status_type === 'text'){
-    mediaHtml = `<div style="font-size:22px;font-weight:600;text-align:center;padding:20px;">${escapeHtml(s.content)}</div>`;
+    mediaHtml = `<div style="font-size:22px;font-weight:600;text-align:center;padding:20px;color:#fff;">${escapeHtml(s.content)}</div>`;
   } else {
     let data = {};
     try{ data = JSON.parse(s.content); }catch(e){}
     caption = data.caption || '';
-    if(s.status_type==='image') mediaHtml = `<img src="${data.url}" style="max-width:100%;max-height:70vh;border-radius:10px;">`;
-    else if(s.status_type==='video') mediaHtml = `<video src="${data.url}" controls autoplay style="max-width:100%;max-height:70vh;border-radius:10px;"></video>`;
-    else if(s.status_type==='voice') mediaHtml = `<audio src="${data.url}" controls autoplay style="width:100%;"></audio>`;
+    if(s.status_type==='image') mediaHtml = `<img src="${data.url}" style="max-width:100%;max-height:65vh;border-radius:10px;display:block;margin:0 auto;">`;
+    else if(s.status_type==='video') mediaHtml = `<video id="sv-media" src="${data.url}" autoplay playsinline style="max-width:100%;max-height:65vh;border-radius:10px;display:block;margin:0 auto;"></video>`;
+    else if(s.status_type==='voice') mediaHtml = `<div style="padding:40px 0 10px;font-size:60px;text-align:center;">🎤</div><audio id="sv-media" src="${data.url}" autoplay style="width:100%;"></audio>`;
   }
-  const name = s.jmtchat_profiles?.profile_name || s.jmtchat_profiles?.full_name || (isMine ? (me.profile_name||me.full_name) : 'Utilisateur');
-  let viewersHtml = '';
-  if(isMine){
-    const { data: views } = await sb.from('jmtchat_status_views').select('*, jmtchat_profiles(profile_name, full_name, avatar_url)').eq('status_id', statusId);
-    viewersHtml = `
-      <div style="background:#fff;border-radius:14px;padding:14px;margin-top:16px;">
-        <div style="font-weight:700;margin-bottom:8px;">👁️ ${views?.length||0} vue(s)</div>
-        ${(views||[]).map(v => `
-          <div style="display:flex;align-items:center;gap:8px;padding:6px 0;">
-            <img src="${v.jmtchat_profiles?.avatar_url || initialsAvatar('U')}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;">
-            <span style="font-size:13px;">${v.jmtchat_profiles?.profile_name || v.jmtchat_profiles?.full_name || 'Utilisateur'}</span>
-          </div>`).join('') || '<div style="font-size:12px;color:var(--muted);">Personne n\'a encore vu ce statut.</div>'}
-        <div style="display:flex;gap:10px;margin-top:12px;">
-          ${s.status_type==='text' ? `<button class="btn ghost" style="flex:1;" onclick="editStatus('${statusId}')">✏️ Modifier</button>` : ''}
-          <button class="btn" style="flex:1;background:var(--danger);" onclick="deleteStatus('${statusId}')">🗑️ Supprimer</button>
+  const frame = document.getElementById('sv-frame');
+  if(frame) frame.innerHTML = `
+    ${mediaHtml}
+    ${caption ? `<div style="margin-top:12px;font-size:15px;color:#fff;text-align:center;">${escapeHtml(caption)}</div>` : ''}`;
+  const controls = document.getElementById('sv-owner-controls');
+  if(controls){
+    controls.innerHTML = isMine ? `
+      <div style="background:#fff;border-radius:14px 14px 0 0;padding:14px;">
+        <div style="display:flex;gap:10px;">
+          ${s.status_type==='text' ? `<button class="btn ghost" style="flex:1;" onclick="editStatus('${s.id}')">✏️ Modifier</button>` : ''}
+          <button class="btn" style="flex:1;background:var(--danger);" onclick="deleteStatus('${s.id}')">🗑️ Supprimer</button>
         </div>
-      </div>`;
+      </div>` : '';
   }
-  const v = document.createElement('div');
-  v.className='status-view';
-  v.style.background = '#0b1b3a';
-  v.style.overflowY = 'auto';
-  v.innerHTML = `
-    <div class="sv-header"><span onclick="this.closest('.status-view').remove()" style="cursor:pointer;font-size:20px;">←</span><div>${name}</div></div>
-    <div class="sv-content" style="flex-direction:column;padding:16px;">
-      ${mediaHtml}
-      ${caption ? `<div style="margin-top:12px;font-size:15px;">${escapeHtml(caption)}</div>` : ''}
-      ${viewersHtml}
-    </div>`;
-  document.body.appendChild(v);
+  const mediaEl = document.getElementById('sv-media');
+  if(mediaEl && (s.status_type==='video' || s.status_type==='voice')){
+    mediaEl.onended = () => storyNext();
+    const start = () => {
+      duration = (mediaEl.duration && isFinite(mediaEl.duration)) ? mediaEl.duration*1000 : 8000;
+      animateSegAndSchedule(index, duration);
+    };
+    if(mediaEl.readyState >= 1 && mediaEl.duration && isFinite(mediaEl.duration)) start();
+    else mediaEl.onloadedmetadata = start;
+  } else {
+    animateSegAndSchedule(index, duration);
+  }
+}
+function animateSegAndSchedule(index, duration){
+  if(!storyViewer) return;
+  const fill = document.getElementById(`sv-seg-${index}`);
+  if(fill){
+    fill.style.transition = 'none';
+    fill.style.width = '0%';
+    requestAnimationFrame(()=>{
+      fill.style.transition = `width ${duration}ms linear`;
+      fill.style.width = '100%';
+    });
+  }
+  storyViewer.timer = setTimeout(()=>{ storyNext(); }, duration);
+}
+function storyNext(){
+  if(!storyViewer) return;
+  renderStoryFrame(storyViewer.index + 1);
+}
+function storyPrev(){
+  if(!storyViewer || storyViewer.index === 0) return;
+  renderStoryFrame(storyViewer.index - 1);
 }
 function editStatus(statusId){
   const s = statusesById[statusId];
-  document.querySelector('.status-view')?.remove();
+  if(!s) return;
+  closeStoryViewer();
   const sheet = document.createElement('div');
   sheet.className='sheet';
   sheet.innerHTML = `
@@ -1550,11 +1676,30 @@ async function deleteStatus(statusId){
   try{
     const { error } = await sb.from('jmtchat_statuses').delete().eq('id', statusId);
     if(error){ toast("Erreur : " + error.message); return; }
-    document.querySelector('.status-view')?.remove();
     toast("Statut supprimé.");
+    removeStatusFromViewerAndCache(statusId);
     loadStatuses();
   } finally {
     statusDeleting = false;
+  }
+}
+// Retire un statut du cache local et, s'il est en cours de visionnage (chez soi ou chez un autre
+// utilisateur connecté en temps réel), avance proprement le lecteur ou le referme.
+function removeStatusFromViewerAndCache(statusId){
+  delete statusesById[statusId];
+  for(const pid in statusGroupsByUser){
+    const g = statusGroupsByUser[pid];
+    const i = g.statuses.findIndex(x => x.id === statusId);
+    if(i > -1) g.statuses.splice(i, 1);
+  }
+  if(storyViewer && storyViewer.statuses.some(x => x.id === statusId)){
+    const wasIndex = storyViewer.index;
+    storyViewer.statuses = storyViewer.statuses.filter(x => x.id !== statusId);
+    if(!storyViewer.statuses.length){
+      closeStoryViewer();
+    } else {
+      renderStoryFrame(Math.min(wasIndex, storyViewer.statuses.length - 1));
+    }
   }
 }
 
