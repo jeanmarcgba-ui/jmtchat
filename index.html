@@ -587,7 +587,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.19.7";
+const APP_VERSION = "2026.07.19.8";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2753,6 +2753,38 @@ const rtcConfig = { iceServers: [
 let localStream = null;
 let peerConnection = null;
 let currentCallPartner = null;
+let ringtoneAudioCtx = null;
+let ringtoneInterval = null;
+function playRingtone(){
+  stopRingtone();
+  try{
+    ringtoneAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ringOnce = ()=>{
+      if(!ringtoneAudioCtx) return;
+      const now = ringtoneAudioCtx.currentTime;
+      [0, 0.35].forEach(offset=>{
+        const osc = ringtoneAudioCtx.createOscillator();
+        const gain = ringtoneAudioCtx.createGain();
+        osc.frequency.value = 880;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.0001, now+offset);
+        gain.gain.exponentialRampToValueAtTime(0.35, now+offset+0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now+offset+0.32);
+        osc.connect(gain).connect(ringtoneAudioCtx.destination);
+        osc.start(now+offset);
+        osc.stop(now+offset+0.35);
+      });
+      if(navigator.vibrate) navigator.vibrate([400,200,400]);
+    };
+    ringOnce();
+    ringtoneInterval = setInterval(ringOnce, 2200);
+  }catch(e){ console.warn("Sonnerie non disponible :", e); }
+}
+function stopRingtone(){
+  if(ringtoneInterval){ clearInterval(ringtoneInterval); ringtoneInterval = null; }
+  if(ringtoneAudioCtx){ try{ ringtoneAudioCtx.close(); }catch(e){} ringtoneAudioCtx = null; }
+  if(navigator.vibrate) navigator.vibrate(0);
+}
 let callType = 'audio';
 let callAnswered = false;
 let incomingOffer = null;
@@ -2833,7 +2865,7 @@ function handleCallSignal(payload){
     document.getElementById('call-controls').classList.add('hidden');
     document.getElementById('outgoing-actions').classList.add('hidden');
     document.getElementById('incoming-actions').classList.remove('hidden');
-    if(navigator.vibrate) navigator.vibrate([400,200,400,200,400]);
+    playRingtone();
   } else if(payload.kind === 'group-invite'){
     if(currentCallPartner || isGroupCall) return;
     showIncomingGroupCall(payload);
@@ -2949,6 +2981,7 @@ async function startCall(type){
   }
 }
 async function acceptCall(){
+  stopRingtone();
   if(pendingGroupInvite){
     const invite = pendingGroupInvite;
     pendingGroupInvite = null;
@@ -3017,6 +3050,7 @@ function endCall(){
   closeCallScreen();
 }
 function closeCallScreen(){
+  stopRingtone();
   clearTimeout(callRingTimeout);
   clearInterval(callOfferResendInterval);
   callOfferResendInterval = null;
@@ -3085,7 +3119,7 @@ function showIncomingGroupCall(payload){
   document.getElementById('call-controls').classList.add('hidden');
   document.getElementById('outgoing-actions').classList.add('hidden');
   document.getElementById('incoming-actions').classList.remove('hidden');
-  if(navigator.vibrate) navigator.vibrate([400,200,400,200,400]);
+  playRingtone();
 }
 async function startGroupCall(type, gId, gName, gAvatar, sendInvites){
   if(currentCallPartner || isGroupCall){ toast("Un appel est déjà en cours."); return; }
