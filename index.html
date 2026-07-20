@@ -596,7 +596,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.3";
+const APP_VERSION = "2026.07.20.4";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -958,6 +958,8 @@ async function enterApp(){
       switchTab('tchat');
     }
   } else {
+    document.getElementById('unread-total-btn')?.classList.add('hidden');
+    document.getElementById('push-banner')?.classList.add('hidden');
     await loadCreatorDashboard();
     if(mySession !== appSessionId) return;
   }
@@ -2937,6 +2939,7 @@ function stopRingtone(){
 }
 let lastNotificationSoundAt = 0;
 function playMessageNotificationSound(){
+  if(!me || me.is_creator) return;
   const now = Date.now();
   if(now - lastNotificationSoundAt < 800) return; // évite les sons qui se chevauchent
   lastNotificationSoundAt = now;
@@ -2960,6 +2963,7 @@ function playMessageNotificationSound(){
   }catch(e){ console.warn("Son de notification indisponible :", e); }
 }
 function updateAppBadge(count){
+  if(!me || me.is_creator) return;
   try{
     if('setAppBadge' in navigator){
       if(count > 0) navigator.setAppBadge(count).catch(()=>{});
