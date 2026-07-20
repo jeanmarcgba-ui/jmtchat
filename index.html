@@ -477,6 +477,10 @@
           </div>
         </div>
       </div>
+      <div id="ringtone-section">
+        <div class="section-title">🔔 Sonnerie d'appel</div>
+        <div id="ringtone-box" style="padding:16px;"></div>
+      </div>
       <div class="section-title">À propos du créateur</div>
       <div id="creator-info-box" style="padding:16px;"></div>
       <div id="broadcast-section" class="hidden">
@@ -587,7 +591,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.19.8";
+const APP_VERSION = "2026.07.19.9";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -970,7 +974,8 @@ function switchTab(tab){
   if(tab==='option'){
     document.getElementById('lock-section').classList.toggle('hidden', me.is_creator);
     document.getElementById('broadcast-section').classList.toggle('hidden', !me.is_creator);
-    if(!me.is_creator) renderLockSettings();
+    document.getElementById('ringtone-section').classList.toggle('hidden', me.is_creator);
+    if(!me.is_creator){ renderLockSettings(); renderRingtoneChoices(); }
     loadCreatorInfo();
     loadComments();
   }
@@ -2596,6 +2601,24 @@ async function tryUnlock(){
     toast("Code incorrect.");
   }
 }
+function renderRingtoneChoices(){
+  const box = document.getElementById('ringtone-box');
+  if(!box) return;
+  const labels = { classic:'🔔 Classique', douce:'🎐 Douce', rapide:'⚡ Rapide', grave:'🎺 Grave' };
+  const current = me.ringtone_style || 'classic';
+  box.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:14px;">
+      <p style="font-size:12.5px;color:var(--muted);margin-bottom:12px;">Choisis le son que tu entendras lors d'un appel entrant.</p>
+      ${Object.keys(RINGTONE_STYLES).map(key => `
+        <div class="ringtone-option" data-style="${key}" style="display:flex;align-items:center;justify-content:space-between;border:2px solid ${key===current?'var(--blue)':'#1a1a1a'};background:${key===current?'#eaf1ff':'#fff'};border-radius:10px;padding:10px 12px;margin-bottom:8px;">
+          <span style="font-weight:600;font-size:13.5px;">${labels[key]}</span>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button class="icon-btn" style="font-size:16px;" onclick="previewRingtone('${key}')">▶️ Écouter</button>
+            <button class="btn ${key===current?'':'ghost'}" style="width:auto;padding:6px 14px;font-size:12px;" onclick="saveRingtoneChoice('${key}')">${key===current?'Sélectionnée':'Choisir'}</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
 function renderLockSettings(){
   const box = document.getElementById('lock-settings-box');
   if(me.lock_code_hash){
@@ -2755,30 +2778,53 @@ let peerConnection = null;
 let currentCallPartner = null;
 let ringtoneAudioCtx = null;
 let ringtoneInterval = null;
+const RINGTONE_STYLES = {
+  classic: { freq:880, beeps:[0, 0.35], beepLength:0.32, interval:2200, vibrate:[400,200,400] },
+  douce:   { freq:523, beeps:[0], beepLength:0.6, interval:1800, vibrate:[250] },
+  rapide:  { freq:1046, beeps:[0, 0.18, 0.36], beepLength:0.14, interval:1400, vibrate:[150,80,150,80,150] },
+  grave:   { freq:330, beeps:[0, 0.5], beepLength:0.45, interval:2600, vibrate:[500,200,500] }
+};
+function playRingtoneTone(styleKey, ctx){
+  const style = RINGTONE_STYLES[styleKey] || RINGTONE_STYLES.classic;
+  const now = ctx.currentTime;
+  style.beeps.forEach(offset=>{
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = style.freq;
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0.0001, now+offset);
+    gain.gain.exponentialRampToValueAtTime(0.35, now+offset+0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now+offset+style.beepLength);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now+offset);
+    osc.stop(now+offset+style.beepLength);
+  });
+  if(navigator.vibrate) navigator.vibrate(style.vibrate);
+}
 function playRingtone(){
   stopRingtone();
   try{
+    const styleKey = (me && me.ringtone_style) || 'classic';
+    const style = RINGTONE_STYLES[styleKey] || RINGTONE_STYLES.classic;
     ringtoneAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const ringOnce = ()=>{
-      if(!ringtoneAudioCtx) return;
-      const now = ringtoneAudioCtx.currentTime;
-      [0, 0.35].forEach(offset=>{
-        const osc = ringtoneAudioCtx.createOscillator();
-        const gain = ringtoneAudioCtx.createGain();
-        osc.frequency.value = 880;
-        osc.type = 'sine';
-        gain.gain.setValueAtTime(0.0001, now+offset);
-        gain.gain.exponentialRampToValueAtTime(0.35, now+offset+0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now+offset+0.32);
-        osc.connect(gain).connect(ringtoneAudioCtx.destination);
-        osc.start(now+offset);
-        osc.stop(now+offset+0.35);
-      });
-      if(navigator.vibrate) navigator.vibrate([400,200,400]);
-    };
+    const ringOnce = ()=>{ if(ringtoneAudioCtx) playRingtoneTone(styleKey, ringtoneAudioCtx); };
     ringOnce();
-    ringtoneInterval = setInterval(ringOnce, 2200);
+    ringtoneInterval = setInterval(ringOnce, style.interval);
   }catch(e){ console.warn("Sonnerie non disponible :", e); }
+}
+function previewRingtone(styleKey){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    playRingtoneTone(styleKey, ctx);
+    setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 1200);
+  }catch(e){ console.warn("Aperçu impossible :", e); }
+}
+async function saveRingtoneChoice(styleKey){
+  me.ringtone_style = styleKey;
+  const { error } = await sb.from('jmtchat_profiles').update({ ringtone_style: styleKey }).eq('id', me.id);
+  if(error){ toast("Erreur : " + error.message); return; }
+  renderRingtoneChoices();
+  toast("Sonnerie enregistrée !");
 }
 function stopRingtone(){
   if(ringtoneInterval){ clearInterval(ringtoneInterval); ringtoneInterval = null; }
