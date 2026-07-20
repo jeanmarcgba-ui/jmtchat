@@ -596,7 +596,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.4";
+const APP_VERSION = "2026.07.20.5";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -658,6 +658,10 @@ function toast(msg){
 function genCode(){ return String(Math.floor(1000+Math.random()*9000)); }
 function initialsAvatar(name){
   return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name||'U')}&backgroundColor=0b1b3a`;
+}
+function isRecentlyOnline(p){
+  if(!p || !p.last_seen) return false;
+  return (Date.now() - new Date(p.last_seen).getTime()) < 70000;
 }
 function fmtTime(ts){
   const d = new Date(ts);
@@ -1018,7 +1022,7 @@ function openUserProfile(userId){
         <img src="${avatarUrl}" style="width:120px;height:120px;border-radius:50%;object-fit:cover;border:3px solid var(--gold);cursor:pointer;" onclick="event.stopPropagation();openPhotoViewer('${avatarUrl}')">
         <div style="font-size:19px;font-weight:700;margin-top:14px;">${p.profile_name || p.full_name}</div>
         <div style="font-size:13px;color:var(--muted);margin-top:4px;">${p.phone||''}</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:6px;">${p.is_online ? '🟢 En ligne' : 'Hors ligne'}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;">${isRecentlyOnline(p) ? '🟢 En ligne' : 'Hors ligne'}</div>
         ${iBlocked ? '<div style="margin-top:10px;font-size:12.5px;color:var(--danger);">🚫 Vous avez bloqué cet utilisateur</div>' : ''}
         <button class="btn" style="margin-top:18px;" onclick="event.stopPropagation();this.closest('.sheet').remove();openConversation('user','${p.id}')">💬 Envoyer un message</button>
       </div>
@@ -1069,9 +1073,9 @@ function renderContactList(){
       <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}" onclick="event.stopPropagation();openUserProfile('${p.id}')">
       <div class="info">
         <div class="name">${p.profile_name || p.full_name}</div>
-        <div class="last">${p.is_online ? 'En ligne' : 'Hors ligne'}</div>
+        <div class="last">${isRecentlyOnline(p) ? 'En ligne' : 'Hors ligne'}</div>
       </div>
-      <div class="dot ${p.is_online?'online':''}"></div>
+      <div class="dot ${isRecentlyOnline(p)?'online':''}"></div>
     </div>`).join('');
 }
 async function loadDiscussions(){
@@ -1162,7 +1166,7 @@ function applyConvBlockUI(){
 }
 function conversationStatusLabel(p){
   if(!p) return '';
-  if(p.is_online) return '🟢 En ligne';
+  if(isRecentlyOnline(p)) return '🟢 En ligne';
   if(p.last_seen){
     const d = new Date(p.last_seen);
     const jour = d.toLocaleDateString('fr-FR', { day:'2-digit', month:'long' });
@@ -2526,7 +2530,7 @@ function renderDirectory(){
     const p = entry.contact_profile_id ? allProfiles.find(x => x.id === entry.contact_profile_id) : null;
     const name = p ? (p.profile_name || p.full_name) : entry.contact_name;
     const avatar = p ? (p.avatar_url || initialsAvatar(name)) : initialsAvatar(name);
-    const statusLabel = p ? (p.is_online ? 'En ligne · sur JMTchat' : 'Sur JMTchat') : "N'a pas encore JMTchat";
+    const statusLabel = p ? (isRecentlyOnline(p) ? 'En ligne · sur JMTchat' : 'Sur JMTchat') : "N'a pas encore JMTchat";
     return `
       <div class="list-item" onclick="${p ? `openUserProfile('${p.id}')` : `toast("Cette personne n'a pas encore rejoint JMTchat.")`}">
         <img class="avatar" src="${avatar}" onclick="event.stopPropagation();${p ? `openUserProfile('${p.id}')` : ''}">
@@ -3588,7 +3592,7 @@ function openCreatorUserProfile(profileId){
         <div style="font-size:13px;color:var(--muted);margin-top:4px;">${p.phone}</div>
         ${p.email ? `<div style="font-size:13px;color:var(--muted);">${p.email}</div>` : ''}
         <div style="text-align:left;background:#f7f9fc;border-radius:12px;padding:12px;margin-top:16px;font-size:13px;">
-          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Statut</span><span>${p.is_online?'🟢 En ligne':'Hors ligne'}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Statut</span><span>${isRecentlyOnline(p)?'🟢 En ligne':'Hors ligne'}</span></div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Dernière connexion</span><span>${lastSeen}</span></div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Nombre de connexions</span><span>${p.login_count||0}</span></div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Inscrit le</span><span>${new Date(p.created_at).toLocaleDateString('fr-FR')}</span></div>
@@ -3749,16 +3753,18 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   registerServiceWorker();
   checkForUpdate();
   setInterval(checkForUpdate, 5 * 60 * 1000);
+  const sendHeartbeat = ()=>{
+    if(me?.id && !me.is_creator) sb.from('jmtchat_profiles').update({ last_seen:new Date().toISOString(), is_online:true }).eq('id', me.id).then(()=>{});
+  };
+  setInterval(sendHeartbeat, 25000);
   document.addEventListener('visibilitychange', ()=>{
     if(document.visibilityState === 'visible'){
       checkForUpdate();
-      if(me?.id) sb.from('jmtchat_profiles').update({ is_online:true, last_seen:new Date().toISOString() }).eq('id', me.id).then(()=>{});
-    } else {
-      if(me?.id) sb.from('jmtchat_profiles').update({ is_online:false, last_seen:new Date().toISOString() }).eq('id', me.id).then(()=>{});
+      sendHeartbeat();
     }
   });
   window.addEventListener('pagehide', ()=>{
-    if(me?.id) sb.from('jmtchat_profiles').update({ is_online:false, last_seen:new Date().toISOString() }).eq('id', me.id).then(()=>{});
+    if(me?.id && !me.is_creator) sb.from('jmtchat_profiles').update({ is_online:false, last_seen:new Date().toISOString() }).eq('id', me.id).then(()=>{});
   });
   await ensureAuthSession();
   const ok = await tryAutoLogin();
