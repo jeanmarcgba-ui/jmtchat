@@ -587,7 +587,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.19.6";
+const APP_VERSION = "2026.07.19.7";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2812,6 +2812,10 @@ function handleCallSignal(payload){
   if(payload.kind === 'offer'){
     if(isBlockedEitherWay(payload.from)){
       sendCallSignal(payload.from, { kind:'decline', from:me.id, reason:'blocked' });
+      return;
+    }
+    if(currentCallPartner && currentCallPartner.id === payload.from && !isGroupCall){
+      // Renvoi du même appel déjà en cours de sonnerie : on l'ignore simplement
       return;
     }
     if(currentCallPartner || isGroupCall){
