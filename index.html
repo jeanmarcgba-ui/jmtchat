@@ -596,7 +596,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.2";
+const APP_VERSION = "2026.07.20.3";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -1085,6 +1085,7 @@ async function loadDiscussions(){
   });
   unreadDiscussionsMap = map;
   const totalUnread = Object.values(map).reduce((sum, info) => sum + info.unread, 0);
+  updateAppBadge(totalUnread);
   const unreadBtn = document.getElementById('unread-total-btn');
   if(unreadBtn){
     unreadBtn.classList.toggle('hidden', totalUnread === 0);
@@ -1344,13 +1345,15 @@ function subscribeRealtime(){
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_messages' }, payload => {
       const m = payload.new;
       messagesById[m.id] = m;
-      if(currentConv && m.conversation_id === currentConv.convId){
+      const isViewingThisConv = currentConv && m.conversation_id === currentConv.convId;
+      if(isViewingThisConv){
         loadMessages();
         if(currentConv.type==='user' && m.receiver_id===me.id && !m.is_read){
           sb.from('jmtchat_messages').update({ is_read:true }).eq('id', m.id).then(()=>{});
         }
       }
-      if(document.getElementById('tab-tchat')?.classList.contains('active')) loadDiscussions();
+      if(m.sender_id !== me.id && !isViewingThisConv) playMessageNotificationSound();
+      loadDiscussions();
     })
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'jmtchat_messages' }, payload => {
       const m = payload.new;
@@ -1358,7 +1361,7 @@ function subscribeRealtime(){
       if(currentConv && m.conversation_id === currentConv.convId && currentConv.type==='user'){
         loadMessages();
       }
-      if(document.getElementById('tab-tchat')?.classList.contains('active')) loadDiscussions();
+      loadDiscussions();
     })
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'jmtchat_profiles' }, payload => {
       if(payload.new.id !== me.id){ loadContacts(); toast(`${payload.new.profile_name || payload.new.full_name} a rejoint JMTchat !`); }
@@ -2931,6 +2934,38 @@ function stopRingtone(){
   if(ringtoneAudioCtx){ try{ ringtoneAudioCtx.close(); }catch(e){} ringtoneAudioCtx = null; }
   if(customRingtoneAudio){ try{ customRingtoneAudio.pause(); customRingtoneAudio.currentTime = 0; }catch(e){} customRingtoneAudio = null; }
   if(navigator.vibrate) navigator.vibrate(0);
+}
+let lastNotificationSoundAt = 0;
+function playMessageNotificationSound(){
+  const now = Date.now();
+  if(now - lastNotificationSoundAt < 800) return; // évite les sons qui se chevauchent
+  lastNotificationSoundAt = now;
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = ctx.currentTime;
+    [ [880, 0], [1175, 0.09] ].forEach(([freq, offset])=>{
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.0001, t+offset);
+      gain.gain.exponentialRampToValueAtTime(0.25, t+offset+0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t+offset+0.18);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t+offset);
+      osc.stop(t+offset+0.2);
+    });
+    setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 500);
+    if(navigator.vibrate) navigator.vibrate(120);
+  }catch(e){ console.warn("Son de notification indisponible :", e); }
+}
+function updateAppBadge(count){
+  try{
+    if('setAppBadge' in navigator){
+      if(count > 0) navigator.setAppBadge(count).catch(()=>{});
+      else navigator.clearAppBadge().catch(()=>{});
+    }
+  }catch(e){ /* API non supportée, pas grave */ }
 }
 let callType = 'audio';
 let callAnswered = false;
