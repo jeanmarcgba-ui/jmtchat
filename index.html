@@ -591,7 +591,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.19.9";
+const APP_VERSION = "2026.07.19.11";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -1574,6 +1574,14 @@ function renderBubbleContent(m){
     const label = m.sender_id===me.id ? 'Appel sans réponse' : 'Appel manqué';
     return `<span style="color:var(--danger);display:flex;align-items:center;gap:6px;">${icon} ${label}</span>`;
   }
+  if(m.msg_type==='call_log'){
+    const icon = data.call_type==='video' ? '🎥' : '📞';
+    const mn = String(Math.floor((data.duration||0)/60)).padStart(2,'0');
+    const sc = String((data.duration||0)%60).padStart(2,'0');
+    const isMine = m.sender_id===me.id;
+    const label = isMine ? '↗️ Appel sortant' : '↙️ Appel entrant';
+    return `<span style="color:#1e4620;display:flex;align-items:center;gap:6px;">${icon} ${label} · ${mn}:${sc}</span>`;
+  }
   return escapeHtml(m.content||'');
 }
 function lastMessagePreview(m){
@@ -1584,6 +1592,7 @@ function lastMessagePreview(m){
   if(m.msg_type==='document') return '📄 Document';
   if(m.msg_type==='location') return '📍 Position';
   if(m.msg_type==='missed_call') return (m.sender_id===me.id ? '📞 Appel sans réponse' : '📞 Appel manqué');
+  if(m.msg_type==='call_log') return '📞 Appel';
   return escapeHtml(m.content||'');
 }
 function callPlaceholder(type){ toast((type==='audio'?"📞 Appel audio":"🎥 Appel vidéo") + " : arrive dans une prochaine étape."); }
@@ -2617,6 +2626,14 @@ function renderRingtoneChoices(){
             <button class="btn ${key===current?'':'ghost'}" style="width:auto;padding:6px 14px;font-size:12px;" onclick="saveRingtoneChoice('${key}')">${key===current?'Sélectionnée':'Choisir'}</button>
           </div>
         </div>`).join('')}
+      <div class="ringtone-option" data-style="custom" style="display:flex;align-items:center;justify-content:space-between;border:2px solid ${current==='custom'?'var(--blue)':'#1a1a1a'};background:${current==='custom'?'#eaf1ff':'#fff'};border-radius:10px;padding:10px 12px;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
+        <span style="font-weight:600;font-size:13.5px;">🎵 Ma musique ${me.custom_ringtone_url ? '' : '<span style="font-weight:400;color:var(--muted);">(aucun fichier importé)</span>'}</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${me.custom_ringtone_url ? `<button class="icon-btn" style="font-size:16px;" onclick="previewRingtone('custom')">▶️ Écouter</button>` : ''}
+          ${me.custom_ringtone_url ? `<button class="btn ${current==='custom'?'':'ghost'}" style="width:auto;padding:6px 14px;font-size:12px;" onclick="saveRingtoneChoice('custom')">${current==='custom'?'Sélectionnée':'Choisir'}</button>` : ''}
+        </div>
+      </div>
+      <button class="btn ghost" style="margin-top:8px;" onclick="uploadCustomRingtone()">📁 Importer un fichier audio depuis mon appareil</button>
     </div>`;
 }
 function renderLockSettings(){
@@ -2801,10 +2818,20 @@ function playRingtoneTone(styleKey, ctx){
   });
   if(navigator.vibrate) navigator.vibrate(style.vibrate);
 }
+let customRingtoneAudio = null;
 function playRingtone(){
   stopRingtone();
+  const styleKey = (me && me.ringtone_style) || 'classic';
+  if(styleKey === 'custom' && me.custom_ringtone_url){
+    try{
+      customRingtoneAudio = new Audio(me.custom_ringtone_url);
+      customRingtoneAudio.loop = true;
+      customRingtoneAudio.play().catch(e=>console.warn("Lecture sonnerie perso impossible :", e));
+      if(navigator.vibrate) navigator.vibrate([400,200,400]);
+      return;
+    }catch(e){ console.warn("Sonnerie personnalisée indisponible :", e); }
+  }
   try{
-    const styleKey = (me && me.ringtone_style) || 'classic';
     const style = RINGTONE_STYLES[styleKey] || RINGTONE_STYLES.classic;
     ringtoneAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const ringOnce = ()=>{ if(ringtoneAudioCtx) playRingtoneTone(styleKey, ringtoneAudioCtx); };
@@ -2813,6 +2840,15 @@ function playRingtone(){
   }catch(e){ console.warn("Sonnerie non disponible :", e); }
 }
 function previewRingtone(styleKey){
+  if(styleKey === 'custom'){
+    if(!me.custom_ringtone_url){ toast("Importe d'abord un fichier audio."); return; }
+    try{
+      const audio = new Audio(me.custom_ringtone_url);
+      audio.play().catch(e=>console.warn(e));
+      setTimeout(()=>{ audio.pause(); }, 5000);
+    }catch(e){ console.warn("Aperçu impossible :", e); }
+    return;
+  }
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     playRingtoneTone(styleKey, ctx);
@@ -2826,13 +2862,29 @@ async function saveRingtoneChoice(styleKey){
   renderRingtoneChoices();
   toast("Sonnerie enregistrée !");
 }
+function uploadCustomRingtone(){
+  triggerFileInput('audio/*', null, async(file)=>{
+    toast("Envoi du fichier audio...");
+    try{
+      const url = await uploadToChat(file, 'ringtones');
+      const { error } = await sb.from('jmtchat_profiles').update({ custom_ringtone_url: url, ringtone_style: 'custom' }).eq('id', me.id);
+      if(error){ toast("Erreur : " + error.message); return; }
+      me.custom_ringtone_url = url;
+      me.ringtone_style = 'custom';
+      renderRingtoneChoices();
+      toast("Sonnerie personnalisée enregistrée !");
+    }catch(e){ toast("Erreur d'envoi du fichier audio."); }
+  });
+}
 function stopRingtone(){
   if(ringtoneInterval){ clearInterval(ringtoneInterval); ringtoneInterval = null; }
   if(ringtoneAudioCtx){ try{ ringtoneAudioCtx.close(); }catch(e){} ringtoneAudioCtx = null; }
+  if(customRingtoneAudio){ try{ customRingtoneAudio.pause(); customRingtoneAudio.currentTime = 0; }catch(e){} customRingtoneAudio = null; }
   if(navigator.vibrate) navigator.vibrate(0);
 }
 let callType = 'audio';
 let callAnswered = false;
+let isCallInitiator = false;
 let incomingOffer = null;
 let callTimer = null;
 let callSeconds = 0;
@@ -2967,6 +3019,17 @@ async function logMissedCall(otherId, type){
     });
   }catch(e){ console.warn("Impossible d'enregistrer l'appel manqué", e); }
 }
+async function logConnectedCall(otherId, type, durationSeconds){
+  try{
+    await sb.from('jmtchat_messages').insert({
+      conversation_id: convIdFor(otherId),
+      sender_id: me.id,
+      receiver_id: otherId,
+      content: JSON.stringify({ call_type:type, duration:durationSeconds }),
+      msg_type: 'call_log'
+    });
+  }catch(e){ console.warn("Impossible d'enregistrer l'appel", e); }
+}
 async function startCall(type){
   if(!currentConv) return;
   if(currentConv.type === 'group'){
@@ -2977,6 +3040,7 @@ async function startCall(type){
   if(currentConv.type==='user' && isBlockedEitherWay(currentConv.id)){ toast("Impossible d'appeler : cet utilisateur est bloqué."); return; }
   callType = type;
   callAnswered = false;
+  isCallInitiator = true;
   pendingCandidates = [];
   currentCallPartner = { id: currentConv.id, name: currentConv.name, avatar: currentConv.avatar };
   document.getElementById('call-screen').classList.remove('hidden');
@@ -3058,6 +3122,8 @@ async function acceptCall(){
     sendCallSignal(currentCallPartner.id, { kind:'answer', from:me.id, sdp:answer });
     await sb.from('jmtchat_calls').insert({ caller_id:currentCallPartner.id, receiver_id:me.id, call_type:callType, call_status:'answered' });
     document.getElementById('call-status').textContent = 'Connecté';
+    callAnswered = true;
+    isCallInitiator = false;
     startCallTimer();
   }catch(e){
     toast("Erreur : " + e.message);
@@ -3097,6 +3163,10 @@ function endCall(){
 }
 function closeCallScreen(){
   stopRingtone();
+  if(callAnswered && currentCallPartner && !isGroupCall && isCallInitiator){
+    logConnectedCall(currentCallPartner.id, callType, callSeconds);
+  }
+  callAnswered = false;
   clearTimeout(callRingTimeout);
   clearInterval(callOfferResendInterval);
   callOfferResendInterval = null;
