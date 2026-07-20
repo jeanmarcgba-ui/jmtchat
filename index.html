@@ -420,6 +420,11 @@
         <div style="flex:1;font-size:13px;color:#8a6100;">Active les notifications pour ne rater aucun message, même appli fermée.</div>
         <span style="font-size:12px;font-weight:700;color:var(--blue);">Activer</span>
       </div>
+      <div id="unread-total-btn" class="hidden" style="background:var(--blue);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="openUnreadMessagesView()">
+        <span style="font-size:18px;">📩</span>
+        <div style="flex:1;font-size:13.5px;font-weight:600;"><span id="unread-total-count">0</span> message(s) non lu(s)</div>
+        <span style="font-size:16px;">›</span>
+      </div>
       <div class="section-title">Discussions</div>
       <div id="conv-list"><div class="empty-state">Aucune conversation pour l'instant.</div></div>
       <div class="section-title">Tous les utilisateurs JMTchat</div>
@@ -591,7 +596,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.19.11";
+const APP_VERSION = "2026.07.20.2";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -620,6 +625,10 @@ async function loadBlockList(){
 }
 function isBlockedEitherWay(otherId){
   return blockedByMe.has(otherId) || blockedMe.has(otherId);
+}
+function isGroupBlocked(groupId){
+  const g = myGroups.find(x => x.id === groupId);
+  return !!(g && g.is_blocked);
 }
 async function toggleBlockContact(userId, block){
   document.getElementById('user-profile-menu')?.classList.add('hidden');
@@ -1074,6 +1083,13 @@ async function loadDiscussions(){
     if(!map[otherId]) map[otherId] = { last:m, unread:0 };
     if(m.receiver_id===me.id && !m.is_read) map[otherId].unread++;
   });
+  unreadDiscussionsMap = map;
+  const totalUnread = Object.values(map).reduce((sum, info) => sum + info.unread, 0);
+  const unreadBtn = document.getElementById('unread-total-btn');
+  if(unreadBtn){
+    unreadBtn.classList.toggle('hidden', totalUnread === 0);
+    unreadBtn.querySelector('#unread-total-count').textContent = totalUnread;
+  }
   const list = document.getElementById('conv-list');
   const ids = Object.keys(map);
   if(!ids.length){ list.innerHTML = '<div class="empty-state">Aucune conversation pour l\'instant.</div>'; return; }
@@ -1092,6 +1108,32 @@ async function loadDiscussions(){
       </div>`;
   }).join('');
 }
+let unreadDiscussionsMap = {};
+function openUnreadMessagesView(){
+  const entries = Object.entries(unreadDiscussionsMap).filter(([id, info]) => info.unread > 0);
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Messages non lus</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body" style="padding:0;">
+        ${entries.length ? entries.map(([id, info]) => {
+          const p = allProfiles.find(x => x.id === id);
+          if(!p) return '';
+          return `
+            <div class="list-item" onclick="this.closest('.sheet').remove();openConversation('user','${id}')">
+              <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+              <div class="info">
+                <div class="name">${p.profile_name || p.full_name}</div>
+                <div class="last">${lastMessagePreview(info.last)}</div>
+              </div>
+              <div class="badge-unread">${info.unread}</div>
+            </div>`;
+        }).join('') : '<div class="empty-state">Aucun message non lu.</div>'}
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
 
 /* ---------------- Conversation privée / groupe ---------------- */
 function convIdFor(otherId){
@@ -1099,9 +1141,14 @@ function convIdFor(otherId){
 }
 function applyConvBlockUI(){
   if(!currentConv) return;
-  const blocked = currentConv.type==='user' && isBlockedEitherWay(currentConv.id);
+  const userBlocked = currentConv.type==='user' && isBlockedEitherWay(currentConv.id);
+  const groupBlocked = currentConv.type==='group' && isGroupBlocked(currentConv.id);
+  const blocked = userBlocked || groupBlocked;
   document.getElementById('conv-inputbar').classList.toggle('hidden', blocked);
   document.getElementById('conv-blocked-notice').classList.toggle('hidden', !blocked);
+  document.getElementById('conv-blocked-notice').textContent = groupBlocked
+    ? '🚫 Ce groupe a été bloqué par l\'administrateur de l\'application.'
+    : '🚫 Vous ne pouvez plus échanger de messages ni appeler cet utilisateur.';
   const audioBtn = document.getElementById('conv-call-audio-btn');
   const videoBtn = document.getElementById('conv-call-video-btn');
   [audioBtn, videoBtn].forEach(btn=>{
@@ -1209,6 +1256,7 @@ async function sendMessage(){
   const content = input.value.trim();
   if(!content || !currentConv) return;
   if(currentConv.type==='user' && isBlockedEitherWay(currentConv.id)){ toast("Impossible d'envoyer : cet utilisateur est bloqué."); return; }
+  if(currentConv.type==='group' && isGroupBlocked(currentConv.id)){ toast("Ce groupe a été bloqué par l'administrateur de l'application."); return; }
   input.value='';
   const { error } = await sb.from('jmtchat_messages').insert({
     conversation_id: currentConv.convId,
@@ -1380,6 +1428,7 @@ async function uploadToChat(file, folder){
 }
 async function sendMediaMessage(msg_type, contentObj){
   if(currentConv?.type==='user' && isBlockedEitherWay(currentConv.id)){ toast("Impossible d'envoyer : cet utilisateur est bloqué."); return; }
+  if(currentConv?.type==='group' && isGroupBlocked(currentConv.id)){ toast("Ce groupe a été bloqué par l'administrateur de l'application."); return; }
   const { error } = await sb.from('jmtchat_messages').insert({
     conversation_id: currentConv.convId,
     sender_id: me.id,
@@ -2097,7 +2146,7 @@ async function loadGroups(){
     <div class="list-item" onclick="openConversation('group','${g.id}')">
       ${g.avatar_url ? `<img class="avatar" src="${g.avatar_url}">` : `<div class="group-avatar">${(g.name||'G')[0].toUpperCase()}</div>`}
       <div class="info">
-        <div class="name">${g.name} ${g.is_admin?'<span style="font-size:10px;color:var(--blue);">· admin</span>':''}</div>
+        <div class="name">${g.name} ${g.is_admin?'<span style="font-size:10px;color:var(--blue);">· admin</span>':''} ${g.is_blocked?'<span style="font-size:10px;color:var(--danger);">· bloqué</span>':''}</div>
         <div class="last">Groupe JMTchat</div>
       </div>
     </div>`).join('');
@@ -2863,7 +2912,8 @@ async function saveRingtoneChoice(styleKey){
   toast("Sonnerie enregistrée !");
 }
 function uploadCustomRingtone(){
-  triggerFileInput('audio/*', null, async(file)=>{
+  const audioTypes = '.mp3,.wav,.ogg,.m4a,.aac,.flac,.wma,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac,audio/x-ms-wma,audio/*';
+  triggerFileInput(audioTypes, null, async(file)=>{
     toast("Envoi du fichier audio...");
     try{
       const url = await uploadToChat(file, 'ringtones');
@@ -3239,6 +3289,7 @@ function showIncomingGroupCall(payload){
 }
 async function startGroupCall(type, gId, gName, gAvatar, sendInvites){
   if(currentCallPartner || isGroupCall){ toast("Un appel est déjà en cours."); return; }
+  if(isGroupBlocked(gId)){ toast("Ce groupe a été bloqué par l'administrateur de l'application."); return; }
   isGroupCall = true;
   groupCallId = gId;
   callType = type;
@@ -3365,11 +3416,19 @@ function startCallTo(userId, type){
 
 /* ---------------- Espace créateur (dashboard) ---------------- */
 let creatorProfilesCache = [];
+let creatorGroupsCache = [];
 async function loadCreatorDashboard(){
   document.getElementById('tab-title').textContent = 'Espace créateur';
   const { data: profiles } = await sb.from('jmtchat_profiles').select('*').order('created_at', {ascending:false});
-  const { data: groups } = await sb.from('jmtchat_groups').select('*');
+  const { data: groups } = await sb.from('jmtchat_groups').select('*').order('created_at', {ascending:false});
+  const { data: allMembers } = await sb.from('jmtchat_group_members').select('*');
   creatorProfilesCache = profiles || [];
+  creatorGroupsCache = (groups || []).map(g => {
+    const members = (allMembers||[]).filter(m => m.group_id === g.id);
+    const admin = members.find(m => m.is_admin);
+    const adminProfile = admin ? (profiles||[]).find(p => p.id === admin.profile_id) : null;
+    return { ...g, memberCount: members.length, adminName: adminProfile ? (adminProfile.profile_name||adminProfile.full_name) : 'Inconnu' };
+  });
   const list = document.getElementById('contact-list');
   document.getElementById('conv-list').innerHTML = `
     <div style="padding:16px;">
@@ -3392,9 +3451,88 @@ async function loadCreatorDashboard(){
         <div class="last">${p.phone} ${p.email?('· '+p.email):''}</div>
       </div>
     </div>`).join('');
+  const groupList = document.getElementById('group-list');
+  if(groupList){
+    groupList.innerHTML = `<div class="section-title">Tous les groupes (${creatorGroupsCache.length})</div>` + (creatorGroupsCache.map(g => `
+      <div class="list-item creator-list-item" onclick="openCreatorGroupProfile('${g.id}')">
+        ${g.avatar_url ? `<img class="avatar" src="${g.avatar_url}">` : `<div class="group-avatar">${(g.name||'G')[0].toUpperCase()}</div>`}
+        <div class="info">
+          <div class="name">${g.name} ${g.is_blocked?'<span style="color:var(--danger);font-size:11px;">· bloqué</span>':''}</div>
+          <div class="last">${g.memberCount} membre(s) · Admin : ${g.adminName}</div>
+        </div>
+      </div>`).join('') || '<div class="empty-state">Aucun groupe pour le moment.</div>');
+  }
   document.querySelectorAll('.bottom-nav button').forEach(b=>{
-    b.style.display = (b.dataset.tab==='tchat' || b.dataset.tab==='option') ? '' : 'none';
+    b.style.display = (b.dataset.tab==='tchat' || b.dataset.tab==='groupe' || b.dataset.tab==='option') ? '' : 'none';
   });
+}
+function openCreatorGroupProfile(groupId){
+  const g = creatorGroupsCache.find(x => x.id === groupId);
+  if(!g) return;
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Groupe</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body" style="text-align:center;">
+        ${g.avatar_url ? `<img src="${g.avatar_url}" style="width:100px;height:100px;border-radius:50%;object-fit:cover;border:3px solid var(--gold);">` : `<div class="group-avatar" style="width:100px;height:100px;font-size:32px;margin:0 auto;">${(g.name||'G')[0].toUpperCase()}</div>`}
+        <div style="font-size:18px;font-weight:700;margin-top:12px;">${g.name}</div>
+        <div style="text-align:left;background:#f7f9fc;border-radius:12px;padding:12px;margin-top:16px;font-size:13px;">
+          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Administrateur</span><span>${g.adminName}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Membres</span><span>${g.memberCount}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--muted);">Créé le</span><span>${new Date(g.created_at).toLocaleDateString('fr-FR')}</span></div>
+        </div>
+        <button class="btn" style="margin-top:16px;background:${g.is_blocked?'#22c55e':'var(--danger)'};" onclick="toggleBlockGroup('${g.id}', ${!g.is_blocked})">
+          ${g.is_blocked ? '✅ Débloquer ce groupe' : '🚫 Bloquer ce groupe'}
+        </button>
+        <button class="btn" style="margin-top:10px;background:#7a1330;" onclick="confirmDeleteGroupByCreator('${g.id}')">🗑️ Supprimer définitivement ce groupe</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function notifyGroupAdmin(groupName, action){
+  try{
+    await sb.from('jmtchat_comments').insert({
+      profile_id: null,
+      author_name: 'Jean Marc (Créateur)',
+      author_avatar: initialsAvatar('GJM'),
+      content: action==='blocked'
+        ? `🚫 Le groupe "${groupName}" a été bloqué. Si tu es l'administrateur et que tu as des questions, réponds ici.`
+        : `🗑️ Le groupe "${groupName}" a été supprimé. Si tu es l'administrateur et que tu as des questions, réponds ici.`
+    });
+  }catch(e){ console.warn("Notification admin échouée", e); }
+}
+async function toggleBlockGroup(groupId, blocked){
+  const g = creatorGroupsCache.find(x => x.id === groupId);
+  const { error } = await sb.rpc('jmtchat_creator_set_group_blocked', { target_group_id: groupId, blocked, pwd: creatorSessionPassword });
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet')?.remove();
+  toast(blocked ? "Groupe bloqué." : "Groupe débloqué.");
+  if(blocked && g) notifyGroupAdmin(g.name, 'blocked');
+  loadCreatorDashboard();
+}
+function confirmDeleteGroupByCreator(groupId){
+  const g = creatorGroupsCache.find(x => x.id === groupId);
+  document.querySelector('.sheet')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="auth-card" style="max-width:340px;">
+      <h2>Supprimer ce groupe</h2>
+      <p class="tag">Cette action est définitive. Le groupe <strong>${g?.name||''}</strong> et tous ses messages seront supprimés.</p>
+      <button class="btn" style="background:var(--danger);" onclick="deleteGroupByCreator('${groupId}')">Oui, supprimer</button>
+      <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+async function deleteGroupByCreator(groupId){
+  const g = creatorGroupsCache.find(x => x.id === groupId);
+  const { error } = await sb.rpc('jmtchat_creator_delete_group', { target_group_id: groupId, pwd: creatorSessionPassword });
+  document.querySelector('.modal-overlay')?.remove();
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Groupe supprimé.");
+  if(g) notifyGroupAdmin(g.name, 'deleted');
+  loadCreatorDashboard();
 }
 function openCreatorUserProfile(profileId){
   const p = creatorProfilesCache.find(x => x.id === profileId);
