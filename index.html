@@ -596,7 +596,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.10";
+const APP_VERSION = "2026.07.20.11";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -1094,10 +1094,10 @@ async function loadDiscussions(){
     .or(`sender_id.eq.${me.id},receiver_id.eq.${me.id}`)
     .order('created_at', { ascending:false });
   const map = {};
-  (msgs||[]).forEach(m=>{
+  (msgs||[]).filter(m => !(m.deleted_by||[]).includes(me.id)).forEach(m=>{
     const otherId = m.sender_id===me.id ? m.receiver_id : m.sender_id;
     if(!map[otherId]) map[otherId] = { last:m, unread:0 };
-    if(m.receiver_id===me.id && !m.is_read) map[otherId].unread++;
+    if(m.receiver_id===me.id && !m.is_read && !m.is_deleted) map[otherId].unread++;
   });
   unreadDiscussionsMap = map;
   const totalUnread = Object.values(map).reduce((sum, info) => sum + info.unread, 0);
@@ -1333,12 +1333,14 @@ async function deleteMessageForMe(msgId){
   const { error } = await sb.rpc('jmtchat_delete_for_me', { msg_id: msgId });
   if(error){ toast("Erreur : " + error.message); return; }
   loadMessages();
+  loadDiscussions();
 }
 async function deleteMessageForEveryone(msgId){
   document.querySelector('.sheet').remove();
   const { error } = await sb.rpc('jmtchat_delete_for_everyone', { msg_id: msgId });
   if(error){ toast("Erreur : " + error.message); return; }
   loadMessages();
+  loadDiscussions();
 }
 function downloadMessageFile(msgId){
   const m = messagesById[msgId];
@@ -1653,6 +1655,7 @@ function renderBubbleContent(m){
   return escapeHtml(m.content||'');
 }
 function lastMessagePreview(m){
+  if(m.is_deleted) return '🚫 Message supprimé';
   if(m.msg_type==='image') return '📷 Photo';
   if(m.msg_type==='gif') return '🎞️ GIF';
   if(m.msg_type==='video') return '🎬 Vidéo';
