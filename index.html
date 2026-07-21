@@ -596,7 +596,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.7";
+const APP_VERSION = "2026.07.20.9";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2460,6 +2460,7 @@ async function checkPushBanner(){
 }
 async function saveSubscription(sub){
   const subJson = sub.toJSON();
+  await sb.rpc('jmtchat_claim_push_endpoint', { new_profile_id: me.id, ep: subJson.endpoint });
   await sb.from('jmtchat_push_subscriptions').upsert({
     profile_id: me.id,
     endpoint: subJson.endpoint,
@@ -2931,8 +2932,11 @@ async function saveRingtoneChoice(styleKey){
   toast("Sonnerie enregistrée !");
 }
 function uploadCustomRingtone(){
-  const audioTypes = '.mp3,.wav,.ogg,.m4a,.aac,.flac,.wma,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac,audio/x-ms-wma,audio/*';
-  triggerFileInput(audioTypes, null, async(file)=>{
+  triggerFileInput('*/*', null, async(file)=>{
+    if(file.type && !file.type.startsWith('audio/')){
+      toast("Choisis bien un fichier audio (MP3, etc.).");
+      return;
+    }
     toast("Envoi du fichier audio...");
     try{
       const url = await uploadToChat(file, 'ringtones');
