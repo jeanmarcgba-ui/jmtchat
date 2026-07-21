@@ -203,7 +203,7 @@
     background:none;border:none;font-size:20px;cursor:pointer;color:var(--navy);padding:6px;
   }
   .conv-inputbar input{
-    flex:1;min-width:0;padding:10px 14px;border-radius:20px;border:1px solid #d0d5dd;font-size:14px;outline:none;
+    flex:1;min-width:0;padding:14px 16px;border-radius:22px;border:1px solid #d0d5dd;font-size:16px;outline:none;
   }
   .send-btn{
     background:var(--blue);color:#fff;border:none;width:38px;height:38px;border-radius:50%;
@@ -546,7 +546,7 @@
     <button class="icon-btn" onclick="toggleAttachMenu()">📎</button>
     <button class="icon-btn" onclick="insertPhoto()">📷</button>
     <button class="icon-btn" onclick="toggleEmojiPicker()">😊</button>
-    <input id="msg-input" type="text" placeholder="Écrire un message..." onkeydown="if(event.key==='Enter')sendMessage()">
+    <input id="msg-input" type="text" placeholder="Écrire un message..." spellcheck="true" lang="fr" autocorrect="on" onkeydown="if(event.key==='Enter')sendMessage()">
     <button class="icon-btn" id="mic-btn" onclick="toggleVoiceRecording()">🎤</button>
     <button class="send-btn" onclick="sendMessage()">➤</button>
     <div id="attach-menu" class="attach-menu hidden">
@@ -596,7 +596,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.9";
+const APP_VERSION = "2026.07.20.10";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
