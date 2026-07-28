@@ -605,7 +605,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.15";
+const APP_VERSION = "2026.07.20.16";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2709,7 +2709,7 @@ async function sha256(text){
 let vaultUnlocked = false;
 let vaultItemsCache = [];
 function openVaultAccess(){
-  if(document.querySelector('.modal-overlay') || document.getElementById('vault-sheet')) return;
+  if(document.querySelector('.modal-overlay:not(.hidden)') || document.getElementById('vault-sheet')) return;
   if(vaultUnlocked){ openVaultContent(); return; }
   if(!me.vault_code_hash){
     const overlay = document.createElement('div');
