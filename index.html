@@ -605,7 +605,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.19";
+const APP_VERSION = "2026.07.20.21";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2826,7 +2826,10 @@ function renderVaultItems(){
     <div style="background:#f7f9fc;border-radius:12px;padding:12px 14px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <div style="font-weight:600;font-size:13.5px;">${icons[it.item_type]||'📁'} ${escapeHtml(it.title||'Sans titre')}</div>
-        <span style="color:var(--danger);cursor:pointer;font-size:13px;" onclick="deleteVaultItem('${it.id}')">🗑️</span>
+        <div style="display:flex;gap:10px;flex-shrink:0;">
+          ${it.file_url ? `<span style="color:var(--blue);cursor:pointer;font-size:13px;" onclick="downloadVaultItem('${it.file_url}','${escapeHtml(it.file_name||it.title||'fichier').replace(/'/g,"\\'")}')">⬇️</span>` : ''}
+          <span style="color:var(--danger);cursor:pointer;font-size:13px;" onclick="deleteVaultItem('${it.id}')">🗑️</span>
+        </div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">${fmtTime(it.created_at)}</div>
       ${it.item_type==='note' ? `<div style="font-size:13.5px;white-space:pre-wrap;">${escapeHtml(it.content||'')}</div>` : ''}
@@ -2835,6 +2838,15 @@ function renderVaultItems(){
       ${it.item_type==='voice' ? `<audio src="${it.file_url}" controls style="width:100%;"></audio>` : ''}
       ${it.item_type==='document' ? `<a href="${it.file_url}" target="_blank" style="color:var(--blue);text-decoration:underline;font-size:13px;">${escapeHtml(it.file_name||'Document')}</a>` : ''}
     </div>`).join('');
+}
+function downloadVaultItem(url, filename){
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || '';
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 function addVaultNote(){
   const sheet = document.createElement('div');
@@ -2861,18 +2873,50 @@ async function saveVaultNote(){
   toast("Note enregistrée !");
 }
 function addVaultMedia(type){
-  const acceptMap = { photo:'image/*', video:'video/*', document:'*/*' };
+  const acceptMap = { photo:'image/*', video:'*/*', document:'*/*' };
   triggerFileInput(acceptMap[type], null, async(file)=>{
-    toast("Envoi en cours...");
-    try{
-      const url = await uploadToChat(file, 'vault');
-      const { error } = await sb.from('jmtchat_vault_items').insert({
-        profile_id: me.id, item_type:type, title:file.name, file_url:url, file_name:file.name
-      });
-      if(error){ toast("Erreur : " + error.message); return; }
-      await refreshVaultItems();
-      toast("Ajouté à ton espace personnel !");
-    }catch(e){ toast("Erreur d'envoi."); }
+    if(type==='video' && file.type && !file.type.startsWith('video/')){
+      toast("Choisis bien un fichier vidéo.");
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    let previewHtml = '';
+    if(type==='photo') previewHtml = `<img src="${objectUrl}" style="max-width:100%;border-radius:10px;margin-bottom:14px;">`;
+    else if(type==='video') previewHtml = `<video src="${objectUrl}" controls style="max-width:100%;border-radius:10px;margin-bottom:14px;"></video>`;
+    else previewHtml = `<div style="background:#f7f9fc;border-radius:10px;padding:16px;text-align:center;margin-bottom:14px;">📄 <div style="margin-top:6px;font-size:13px;word-break:break-all;">${escapeHtml(file.name)}</div></div>`;
+    const sheet = document.createElement('div');
+    sheet.className = 'sheet';
+    sheet.innerHTML = `
+      <div class="sheet-content">
+        <div class="sheet-header"><h3>Aperçu</h3><span class="close" onclick="URL.revokeObjectURL('${objectUrl}');this.closest('.sheet').remove()">✕</span></div>
+        <div class="sheet-body">
+          ${previewHtml}
+          <div class="field"><label>Titre (optionnel)</label><input id="vault-media-title" type="text" value="${escapeHtml(file.name)}"></div>
+          <button class="btn" id="vault-media-confirm-btn">✅ Envoyer</button>
+        </div>
+      </div>`;
+    document.body.appendChild(sheet);
+    document.getElementById('vault-media-confirm-btn').onclick = async ()=>{
+      const btn = document.getElementById('vault-media-confirm-btn');
+      btn.disabled = true;
+      btn.textContent = 'Envoi en cours...';
+      try{
+        const title = document.getElementById('vault-media-title').value.trim() || file.name;
+        const url = await uploadToChat(file, 'vault');
+        const { error } = await sb.from('jmtchat_vault_items').insert({
+          profile_id: me.id, item_type:type, title, file_url:url, file_name:file.name
+        });
+        URL.revokeObjectURL(objectUrl);
+        if(error){ toast("Erreur : " + error.message); return; }
+        sheet.remove();
+        await refreshVaultItems();
+        toast("Ajouté à ton espace personnel !");
+      }catch(e){
+        toast("Erreur d'envoi.");
+        btn.disabled = false;
+        btn.textContent = '✅ Envoyer';
+      }
+    };
   });
 }
 let vaultVoiceRecorder = null;
