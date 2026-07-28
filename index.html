@@ -425,6 +425,11 @@
         <div style="flex:1;font-size:13.5px;font-weight:600;"><span id="unread-total-count">0</span> message(s) non lu(s)</div>
         <span style="font-size:16px;">›</span>
       </div>
+      <div id="vault-reset-banner" class="hidden" style="background:#f5a300;color:#3a2a00;padding:12px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="acknowledgeVaultReset()">
+        <span style="font-size:18px;">🔑</span>
+        <div style="flex:1;font-size:13.5px;font-weight:600;">Ton code "Mes Notes" a été réinitialisé. Touche ici pour en créer un nouveau.</div>
+        <span style="font-size:16px;">›</span>
+      </div>
       <div class="section-title">Discussions</div>
       <div id="conv-list"><div class="empty-state">Aucune conversation pour l'instant.</div></div>
       <div class="section-title">Tous les utilisateurs JMTchat</div>
@@ -612,7 +617,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.25";
+const APP_VERSION = "2026.07.20.26";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -980,6 +985,9 @@ async function enterApp(){
     subscribeRealtime();
     subscribeCallChannel();
     checkPushBanner();
+    if(me.vault_reset_done){
+      document.getElementById('vault-reset-banner')?.classList.remove('hidden');
+    }
     if(!me.is_blocked) checkPendingIncomingCall();
     if(location.search.includes('qrlogin=')) claimQrLoginFromUrl();
     if(me.is_blocked){
@@ -2715,6 +2723,12 @@ async function sha256(text){
 /* ---------------- Mes Notes : espace privé personnel ---------------- */
 let vaultUnlocked = false;
 let vaultItemsCache = [];
+async function acknowledgeVaultReset(){
+  document.getElementById('vault-reset-banner')?.classList.add('hidden');
+  await sb.from('jmtchat_profiles').update({ vault_reset_done:false }).eq('id', me.id);
+  me.vault_reset_done = false;
+  openVaultAccess();
+}
 function openVaultAccess(){
   if(document.querySelector('.modal-overlay:not(.hidden)') || document.getElementById('vault-sheet')) return;
   if(vaultUnlocked){ openVaultContent(); return; }
@@ -2783,6 +2797,8 @@ async function sendForgotVaultCodeMessage(){
   });
   document.querySelector('.modal-overlay:not(.hidden)')?.remove();
   if(error){ toast("Erreur : " + error.message); return; }
+  await sb.from('jmtchat_profiles').update({ vault_reset_requested:true }).eq('id', me.id);
+  me.vault_reset_requested = true;
   toast("Message envoyé au créateur ! Il te répondra via les commentaires dans Option.");
 }
 async function checkVaultCode(){
@@ -3902,6 +3918,7 @@ async function loadCreatorDashboard(){
   const { data: groups } = await sb.from('jmtchat_groups').select('*').order('created_at', {ascending:false});
   const { data: allMembers } = await sb.from('jmtchat_group_members').select('*');
   creatorProfilesCache = profiles || [];
+  const sortedProfiles = [...(profiles||[])].sort((a,b) => (b.vault_reset_requested?1:0) - (a.vault_reset_requested?1:0));
   creatorGroupsCache = (groups || []).map(g => {
     const members = (allMembers||[]).filter(m => m.group_id === g.id);
     const admin = members.find(m => m.is_admin);
@@ -3922,13 +3939,14 @@ async function loadCreatorDashboard(){
         </div>
       </div>
     </div>`;
-  list.innerHTML = `<div class="section-title">Tous les utilisateurs (${profiles?.length||0})</div>` + (profiles||[]).map(p => `
-    <div class="list-item creator-list-item" onclick="openCreatorUserProfile('${p.id}')">
+  list.innerHTML = `<div class="section-title">Tous les utilisateurs (${profiles?.length||0})</div>` + sortedProfiles.map(p => `
+    <div class="list-item creator-list-item" onclick="openCreatorUserProfile('${p.id}')" style="${p.vault_reset_requested ? 'background:#fff7e0;' : ''}">
       <img class="avatar" src="${p.avatar_url || initialsAvatar(p.profile_name)}">
       <div class="info">
         <div class="name">${p.profile_name || p.full_name} ${p.is_blocked?'<span style="color:var(--danger);font-size:11px;">· bloqué</span>':''}</div>
-        <div class="last">${p.phone} ${p.email?('· '+p.email):''}</div>
+        <div class="last">${p.vault_reset_requested ? '<span style="color:#8a6100;font-weight:600;">🔑 Code "Mes Notes" oublié — à réinitialiser</span>' : `${p.phone} ${p.email?('· '+p.email):''}`}</div>
       </div>
+      ${p.vault_reset_requested ? `<div class="badge-unread" style="background:#f5a300;">🔑</div>` : ''}
     </div>`).join('');
   const groupList = document.getElementById('group-list');
   if(groupList){
