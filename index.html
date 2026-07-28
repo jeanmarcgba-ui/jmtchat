@@ -605,7 +605,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.16";
+const APP_VERSION = "2026.07.20.17";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2358,7 +2358,7 @@ function confirmDeleteGroup(){
 }
 async function deleteGroupNow(){
   const { error } = await sb.rpc('jmtchat_delete_group', { grp_id: currentConv.id });
-  document.querySelector('.modal-overlay')?.remove();
+  document.querySelector('.modal-overlay:not(.hidden)')?.remove();
   if(error){ toast("Erreur : " + error.message); return; }
   toast("Groupe supprimé.");
   closeConversation();
@@ -2747,7 +2747,7 @@ async function createVaultCode(){
   const { error } = await sb.from('jmtchat_profiles').update({ vault_code_hash:hash }).eq('id', me.id);
   if(error){ toast("Erreur : " + error.message); return; }
   me.vault_code_hash = hash;
-  document.querySelector('.modal-overlay')?.remove();
+  document.querySelector('.modal-overlay:not(.hidden)')?.remove();
   vaultUnlocked = true;
   toast("Code créé !");
   openVaultContent();
@@ -2756,7 +2756,7 @@ async function checkVaultCode(){
   const code = document.getElementById('vault-enter-code').value.trim();
   const hash = await sha256(code);
   if(hash === me.vault_code_hash){
-    document.querySelector('.modal-overlay')?.remove();
+    document.querySelector('.modal-overlay:not(.hidden)')?.remove();
     vaultUnlocked = true;
     openVaultContent();
   } else {
@@ -3873,7 +3873,7 @@ function confirmDeleteGroupByCreator(groupId){
 async function deleteGroupByCreator(groupId){
   const g = creatorGroupsCache.find(x => x.id === groupId);
   const { error } = await sb.rpc('jmtchat_creator_delete_group', { target_group_id: groupId, pwd: creatorSessionPassword });
-  document.querySelector('.modal-overlay')?.remove();
+  document.querySelector('.modal-overlay:not(.hidden)')?.remove();
   if(error){ toast("Erreur : " + error.message); return; }
   toast("Groupe supprimé.");
   if(g) notifyGroupAdmin(g.name, 'deleted');
@@ -3924,7 +3924,7 @@ function confirmDeleteAccountByCreator(profileId, name){
 }
 async function deleteAccountByCreator(profileId){
   const { error } = await sb.rpc('jmtchat_creator_delete_account', { target_id: profileId, pwd: creatorSessionPassword });
-  document.querySelector('.modal-overlay')?.remove();
+  document.querySelector('.modal-overlay:not(.hidden)')?.remove();
   if(error){ toast("Erreur : " + error.message); return; }
   toast("Compte supprimé.");
   loadCreatorDashboard();
