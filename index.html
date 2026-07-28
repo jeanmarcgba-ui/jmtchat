@@ -612,7 +612,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.24";
+const APP_VERSION = "2026.07.20.25";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -4116,6 +4116,17 @@ async function resetUserVaultCode(profileId, name){
   if(error){ toast("Erreur : " + error.message); return; }
   toast(`Code "Mes Notes" de ${name} réinitialisé.`);
   document.querySelector('.sheet')?.remove();
+  try{
+    await fetch(`${SUPABASE_URL}/functions/v1/send-targeted-notification`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${SUPABASE_ANON_KEY}`, 'apikey':SUPABASE_ANON_KEY },
+      body: JSON.stringify({
+        profile_id: profileId,
+        title: '🔑 Code "Mes Notes" réinitialisé',
+        body: 'Rouvre JMTchat et va dans Option → Mes Notes pour créer ton nouveau code.'
+      })
+    });
+  }catch(e){ console.warn("Notification à l'utilisateur non envoyée", e); }
   openVaultCodesAdmin();
 }
 
@@ -4152,8 +4163,12 @@ let commentsChannel = null;
 function subscribeCommentsRealtime(){
   if(commentsChannel) sb.removeChannel(commentsChannel);
   commentsChannel = sb.channel('jmtchat-comments-rt')
-    .on('postgres_changes', { event:'*', schema:'public', table:'jmtchat_comments' }, () => {
+    .on('postgres_changes', { event:'*', schema:'public', table:'jmtchat_comments' }, payload => {
       if(document.getElementById('tab-option')?.classList.contains('active')) loadComments();
+      if(me && me.is_creator && payload.eventType === 'INSERT' && payload.new){
+        const preview = (payload.new.content||'').slice(0, 80);
+        toast(`💬 ${payload.new.author_name} : ${preview}`);
+      }
     })
     .subscribe();
 }
