@@ -617,7 +617,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.28";
+const APP_VERSION = "2026.07.20.29";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -1456,6 +1456,7 @@ function subscribeRealtime(){
       }
       if(payload.new.id === me.id && payload.new.vault_reset_done && !me.vault_reset_done){
         me.vault_reset_done = true;
+        me.vault_code_hash = payload.new.vault_code_hash;
         document.getElementById('vault-reset-banner')?.classList.remove('hidden');
       }
       const idx = allProfiles.findIndex(x=>x.id===payload.new.id);
