@@ -605,7 +605,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.13";
+const APP_VERSION = "2026.07.20.15";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2709,6 +2709,7 @@ async function sha256(text){
 let vaultUnlocked = false;
 let vaultItemsCache = [];
 function openVaultAccess(){
+  if(document.querySelector('.modal-overlay') || document.getElementById('vault-sheet')) return;
   if(vaultUnlocked){ openVaultContent(); return; }
   if(!me.vault_code_hash){
     const overlay = document.createElement('div');
@@ -2717,8 +2718,8 @@ function openVaultAccess(){
       <div class="auth-card" style="max-width:340px;">
         <h2>Créer ton code "Mes Codes"</h2>
         <p class="tag">Ce code protège ton espace personnel. Choisis-en un différent du code de verrouillage de l'appli si tu veux.</p>
-        <div class="field"><input id="vault-new-code" type="password" inputmode="numeric" maxlength="6" placeholder="Nouveau code (4 à 6 chiffres)" style="text-align:center;font-size:18px;letter-spacing:4px;"></div>
-        <div class="field"><input id="vault-confirm-code" type="password" inputmode="numeric" maxlength="6" placeholder="Confirme le code" style="text-align:center;font-size:18px;letter-spacing:4px;"></div>
+        <div class="field"><input id="vault-new-code" type="password" inputmode="numeric" maxlength="6" placeholder="Nouveau code (4 à 6 chiffres)" style="text-align:center;font-size:22px;letter-spacing:8px;padding:16px 14px;height:auto;"></div>
+        <div class="field"><input id="vault-confirm-code" type="password" inputmode="numeric" maxlength="6" placeholder="Confirme le code" style="text-align:center;font-size:22px;letter-spacing:8px;padding:16px 14px;height:auto;"></div>
         <button class="btn gold" onclick="createVaultCode()">Créer</button>
         <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
       </div>`;
@@ -2730,7 +2731,7 @@ function openVaultAccess(){
       <div class="auth-card" style="max-width:320px;">
         <h2>🔐 Mes Codes</h2>
         <p class="tag">Entre ton code personnel</p>
-        <div class="field"><input id="vault-enter-code" type="password" inputmode="numeric" maxlength="6" placeholder="Code" style="text-align:center;font-size:20px;letter-spacing:6px;" onkeydown="if(event.key==='Enter')checkVaultCode()"></div>
+        <div class="field"><input id="vault-enter-code" type="password" inputmode="numeric" maxlength="6" placeholder="Code" style="text-align:center;font-size:24px;letter-spacing:10px;padding:16px 14px;height:auto;" onkeydown="if(event.key==='Enter')checkVaultCode()"></div>
         <button class="btn gold" onclick="checkVaultCode()">Déverrouiller</button>
         <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
       </div>`;
@@ -2776,14 +2777,41 @@ async function openVaultContent(){
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultNote()">📝 Note</button>
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('photo')">📷 Photo</button>
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('video')">🎬 Vidéo</button>
-          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('document')">📄 Document</button>
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultVoice()">🎤 Vocal</button>
+          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('document')">📄 Document</button>
+          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;color:var(--blue);" onclick="openChangeVaultCode()">⚙️ Modifier mon code</button>
         </div>
         <div id="vault-items-list"></div>
       </div>
     </div>`;
   document.body.appendChild(sheet);
   renderVaultItems();
+}
+function openChangeVaultCode(){
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Modifier mon code</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <div class="field"><input id="vault-change-new" type="password" inputmode="numeric" maxlength="6" placeholder="Nouveau code (4 à 6 chiffres)" style="text-align:center;font-size:22px;letter-spacing:8px;padding:16px 14px;height:auto;"></div>
+        <div class="field"><input id="vault-change-confirm" type="password" inputmode="numeric" maxlength="6" placeholder="Confirme le nouveau code" style="text-align:center;font-size:22px;letter-spacing:8px;padding:16px 14px;height:auto;"></div>
+        <button class="btn gold" onclick="saveChangedVaultCode()">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function saveChangedVaultCode(){
+  const code = document.getElementById('vault-change-new').value.trim();
+  const confirmCode = document.getElementById('vault-change-confirm').value.trim();
+  if(!/^\d{4,6}$/.test(code)){ toast("Le code doit contenir entre 4 et 6 chiffres."); return; }
+  if(code !== confirmCode){ toast("Les deux codes ne correspondent pas."); return; }
+  const hash = await sha256(code);
+  const { error } = await sb.from('jmtchat_profiles').update({ vault_code_hash:hash }).eq('id', me.id);
+  if(error){ toast("Erreur : " + error.message); return; }
+  me.vault_code_hash = hash;
+  document.querySelector('.sheet')?.remove();
+  toast("Code modifié !");
 }
 function renderVaultItems(){
   const box = document.getElementById('vault-items-list');
