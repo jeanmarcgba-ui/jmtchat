@@ -478,7 +478,7 @@
         <div style="padding:16px;">
           <div style="background:#fff;border-radius:12px;padding:14px;">
             <p style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Un espace privé protégé par un code, rien qu'à toi : notes, photos, vidéos, documents, vocaux.</p>
-            <button class="btn gold" onclick="openVaultAccess()">🔐 Mes Codes</button>
+            <button class="btn gold" onclick="openVaultAccess()">🔐 Mes Notes</button>
           </div>
         </div>
       </div>
@@ -504,6 +504,13 @@
             <div class="field"><label>Titre</label><input id="broadcast-title" type="text" placeholder="Ex: Mise à jour disponible"></div>
             <div class="field"><label>Message</label><textarea id="broadcast-body" rows="3" style="width:100%;padding:10px;border-radius:10px;border:1px solid #d0d5dd;" placeholder="Ton message..."></textarea></div>
             <button class="btn gold" onclick="sendBroadcastNotification()">📢 Envoyer à tous</button>
+          </div>
+        </div>
+        <div class="section-title">🔑 Les différents codes</div>
+        <div style="padding:16px;">
+          <div style="background:#fff;border-radius:12px;padding:14px;">
+            <p style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Réinitialise le code "Mes Notes" d'un utilisateur qui l'a oublié (ses notes/fichiers restent intacts, il pourra définir un nouveau code).</p>
+            <button class="btn gold" onclick="openVaultCodesAdmin()">🔑 Voir les codes des utilisateurs</button>
           </div>
         </div>
       </div>
@@ -605,7 +612,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.21";
+const APP_VERSION = "2026.07.20.24";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2705,7 +2712,7 @@ async function sha256(text){
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-/* ---------------- Mes Codes : espace privé personnel ---------------- */
+/* ---------------- Mes Notes : espace privé personnel ---------------- */
 let vaultUnlocked = false;
 let vaultItemsCache = [];
 function openVaultAccess(){
@@ -2716,7 +2723,7 @@ function openVaultAccess(){
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="auth-card" style="max-width:340px;">
-        <h2>Créer ton code "Mes Codes"</h2>
+        <h2>Créer ton code "Mes Notes"</h2>
         <p class="tag">Ce code protège ton espace personnel. Choisis-en un différent du code de verrouillage de l'appli si tu veux.</p>
         <div class="field"><input id="vault-new-code" type="password" inputmode="numeric" maxlength="6" placeholder="Nouveau code (4 à 6 chiffres)" style="text-align:center;font-size:22px;letter-spacing:8px;padding:16px 14px;height:auto;"></div>
         <div class="field"><input id="vault-confirm-code" type="password" inputmode="numeric" maxlength="6" placeholder="Confirme le code" style="text-align:center;font-size:22px;letter-spacing:8px;padding:16px 14px;height:auto;"></div>
@@ -2729,11 +2736,12 @@ function openVaultAccess(){
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="auth-card" style="max-width:320px;">
-        <h2>🔐 Mes Codes</h2>
+        <h2>🔐 Mes Notes</h2>
         <p class="tag">Entre ton code personnel</p>
         <div class="field"><input id="vault-enter-code" type="password" inputmode="numeric" maxlength="6" placeholder="Code" style="text-align:center;font-size:24px;letter-spacing:10px;padding:16px 14px;height:auto;" onkeydown="if(event.key==='Enter')checkVaultCode()"></div>
         <button class="btn gold" onclick="checkVaultCode()">Déverrouiller</button>
         <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+        <div style="margin-top:14px;font-size:12.5px;color:var(--blue);cursor:pointer;text-decoration:underline;" onclick="confirmResetVaultCode()">Code oublié ?</div>
       </div>`;
     document.body.appendChild(overlay);
   }
@@ -2751,6 +2759,31 @@ async function createVaultCode(){
   vaultUnlocked = true;
   toast("Code créé !");
   openVaultContent();
+}
+function confirmResetVaultCode(){
+  document.querySelector('.modal-overlay:not(.hidden)')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="auth-card" style="max-width:340px;">
+      <h2>Code oublié</h2>
+      <p class="tag">Envoie un message au créateur de l'application pour qu'il réinitialise ton code "Mes Notes". Tes notes, photos et fichiers resteront intacts.</p>
+      <button class="btn gold" onclick="sendForgotVaultCodeMessage()">📩 Contacter le créateur</button>
+      <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+async function sendForgotVaultCodeMessage(){
+  const authorName = me.profile_name || me.full_name;
+  const { error } = await sb.from('jmtchat_comments').insert({
+    profile_id: me.id,
+    author_name: authorName,
+    author_avatar: me.avatar_url || initialsAvatar(authorName),
+    content: `🔑 J'ai oublié mon code "Mes Notes". Peux-tu me le réinitialiser ? (${me.phone||''})`
+  });
+  document.querySelector('.modal-overlay:not(.hidden)')?.remove();
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Message envoyé au créateur ! Il te répondra via les commentaires dans Option.");
 }
 async function checkVaultCode(){
   const code = document.getElementById('vault-enter-code').value.trim();
@@ -2775,7 +2808,7 @@ async function openVaultContent(){
   sheet.id = 'vault-sheet';
   sheet.innerHTML = `
     <div class="sheet-content" style="max-height:88vh;">
-      <div class="sheet-header"><h3>🔐 Mes Codes</h3><span class="close" onclick="closeVaultContent()">✕</span></div>
+      <div class="sheet-header"><h3>🔐 Mes Notes</h3><span class="close" onclick="closeVaultContent()">✕</span></div>
       <div class="sheet-body">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultNote()">📝 Note</button>
@@ -2827,6 +2860,7 @@ function renderVaultItems(){
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <div style="font-weight:600;font-size:13.5px;">${icons[it.item_type]||'📁'} ${escapeHtml(it.title||'Sans titre')}</div>
         <div style="display:flex;gap:10px;flex-shrink:0;">
+          ${it.item_type==='note' ? `<span style="color:var(--blue);cursor:pointer;font-size:13px;" onclick="editVaultNote('${it.id}')">✏️</span>` : ''}
           ${it.file_url ? `<span style="color:var(--blue);cursor:pointer;font-size:13px;" onclick="downloadVaultItem('${it.file_url}','${escapeHtml(it.file_name||it.title||'fichier').replace(/'/g,"\\'")}')">⬇️</span>` : ''}
           <span style="color:var(--danger);cursor:pointer;font-size:13px;" onclick="deleteVaultItem('${it.id}')">🗑️</span>
         </div>
@@ -2871,6 +2905,32 @@ async function saveVaultNote(){
   document.querySelector('.sheet:not(#vault-sheet)')?.remove();
   await refreshVaultItems();
   toast("Note enregistrée !");
+}
+function editVaultNote(itemId){
+  const it = vaultItemsCache.find(x => x.id === itemId);
+  if(!it) return;
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Modifier la note</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <div class="field"><label>Titre (optionnel)</label><input id="vault-note-edit-title" type="text" value="${escapeHtml(it.title||'')}"></div>
+        <div class="field"><label>Contenu</label><textarea id="vault-note-edit-content" rows="5" style="width:100%;padding:10px;border-radius:10px;">${escapeHtml(it.content||'')}</textarea></div>
+        <button class="btn" onclick="saveEditedVaultNote('${itemId}')">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function saveEditedVaultNote(itemId){
+  const title = document.getElementById('vault-note-edit-title').value.trim();
+  const content = document.getElementById('vault-note-edit-content').value.trim();
+  if(!content){ toast("Le contenu ne peut pas être vide."); return; }
+  const { error } = await sb.from('jmtchat_vault_items').update({ title: title || 'Note', content }).eq('id', itemId);
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet:not(#vault-sheet)')?.remove();
+  await refreshVaultItems();
+  toast("Note modifiée !");
 }
 function addVaultMedia(type){
   const acceptMap = { photo:'image/*', video:'*/*', document:'*/*' };
@@ -4028,6 +4088,35 @@ async function sendBroadcastNotification(){
   }catch(e){
     toast("Erreur d'envoi : " + e.message);
   }
+}
+async function openVaultCodesAdmin(){
+  const { data } = await sb.from('jmtchat_profiles').select('*').not('vault_code_hash', 'is', null).order('profile_name');
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content" style="max-height:82vh;">
+      <div class="sheet-header"><h3>🔑 Codes "Mes Notes"</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <p style="font-size:12.5px;color:var(--muted);margin-bottom:12px;">Utilisateurs ayant activé un code "Mes Notes" :</p>
+        ${(data||[]).map(p => `
+          <div class="select-row" style="cursor:default;">
+            <img src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+            <div style="flex:1;">
+              <div>${p.profile_name || p.full_name}</div>
+              <div style="font-size:11px;color:var(--muted);">${p.phone}</div>
+            </div>
+            <button class="btn" style="width:auto;padding:8px 12px;font-size:12px;background:var(--danger);" onclick="resetUserVaultCode('${p.id}','${(p.profile_name||p.full_name||'').replace(/'/g,"\\'")}')">Réinitialiser</button>
+          </div>`).join('') || '<p style="color:var(--muted);font-size:13px;">Aucun utilisateur n\'a encore activé de code "Mes Notes".</p>'}
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function resetUserVaultCode(profileId, name){
+  const { error } = await sb.rpc('jmtchat_creator_reset_vault_code', { target_id: profileId, pwd: creatorSessionPassword });
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast(`Code "Mes Notes" de ${name} réinitialisé.`);
+  document.querySelector('.sheet')?.remove();
+  openVaultCodesAdmin();
 }
 
 /* ---------------- Commentaires publics ---------------- */
