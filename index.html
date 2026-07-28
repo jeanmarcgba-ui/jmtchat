@@ -473,6 +473,15 @@
         <div class="section-title">Verrouillage de l'application</div>
         <div id="lock-settings-box" style="padding:16px;"></div>
       </div>
+      <div id="vault-section">
+        <div class="section-title">📁 Espace personnel</div>
+        <div style="padding:16px;">
+          <div style="background:#fff;border-radius:12px;padding:14px;">
+            <p style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Un espace privé protégé par un code, rien qu'à toi : notes, photos, vidéos, documents, vocaux.</p>
+            <button class="btn gold" onclick="openVaultAccess()">🔐 Mes Codes</button>
+          </div>
+        </div>
+      </div>
       <div id="account-section">
         <div class="section-title">Compte</div>
         <div style="padding:16px;">
@@ -596,7 +605,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.12";
+const APP_VERSION = "2026.07.20.13";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -998,6 +1007,7 @@ function switchTab(tab){
   if(tab==='repertoire') loadDirectory();
   if(tab==='option'){
     document.getElementById('lock-section').classList.toggle('hidden', me.is_creator);
+    document.getElementById('vault-section').classList.toggle('hidden', me.is_creator);
     document.getElementById('broadcast-section').classList.toggle('hidden', !me.is_creator);
     document.getElementById('ringtone-section').classList.toggle('hidden', me.is_creator);
     if(!me.is_creator){ renderLockSettings(); renderRingtoneChoices(); }
@@ -1291,6 +1301,7 @@ function openMessageActions(msgId){
   if(!m || m.is_deleted) return;
   const isMine = m.sender_id === me.id;
   const isDownloadable = ['image','video','document','gif'].includes(m.msg_type);
+  const isForwardable = !['missed_call','call_log'].includes(m.msg_type);
   const sheet = document.createElement('div');
   sheet.className = 'sheet';
   sheet.innerHTML = `
@@ -1298,12 +1309,51 @@ function openMessageActions(msgId){
       <div class="sheet-header"><h3>Message</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
       <div class="sheet-body">
         ${isMine && m.msg_type==='text' ? `<button class="btn ghost" style="margin-bottom:10px;" onclick="this.closest('.sheet').remove();openEditMessage('${msgId}')">✏️ Modifier</button>` : ''}
+        ${isForwardable ? `<button class="btn ghost" style="margin-bottom:10px;" onclick="this.closest('.sheet').remove();openForwardPicker('${msgId}')">↪️ Transférer</button>` : ''}
         ${isDownloadable ? `<button class="btn ghost" style="margin-bottom:10px;" onclick="downloadMessageFile('${msgId}')">⬇️ Télécharger</button>` : ''}
         <button class="btn ghost" style="margin-bottom:10px;" onclick="deleteMessageForMe('${msgId}')">🗑️ Supprimer pour moi</button>
         ${isMine ? `<button class="btn" style="background:var(--danger);" onclick="deleteMessageForEveryone('${msgId}')">🗑️ Supprimer pour tous</button>` : ''}
       </div>
     </div>`;
   document.body.appendChild(sheet);
+}
+function openForwardPicker(msgId){
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content" style="max-height:82vh;">
+      <div class="sheet-header"><h3>Transférer à...</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        ${myGroups.length ? `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:6px;">Groupes</div>` : ''}
+        ${myGroups.map(g => `
+          <div class="select-row" onclick="forwardMessageTo('${msgId}','group','${g.id}')">
+            ${g.avatar_url ? `<img src="${g.avatar_url}">` : `<div class="group-avatar" style="width:42px;height:42px;font-size:15px;">${(g.name||'G')[0].toUpperCase()}</div>`}
+            <div>${g.name}</div>
+          </div>`).join('')}
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:10px 0 6px;">Utilisateurs</div>
+        ${allProfiles.map(p => `
+          <div class="select-row" onclick="forwardMessageTo('${msgId}','user','${p.id}')">
+            <img src="${p.avatar_url || initialsAvatar(p.profile_name)}">
+            <div>${p.profile_name || p.full_name}</div>
+          </div>`).join('') || '<p style="color:var(--muted);font-size:13px;">Aucun autre utilisateur.</p>'}
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function forwardMessageTo(msgId, targetType, targetId){
+  const m = messagesById[msgId];
+  if(!m) return;
+  const convId = targetType==='user' ? convIdFor(targetId) : ('group_' + targetId);
+  const { error } = await sb.from('jmtchat_messages').insert({
+    conversation_id: convId,
+    sender_id: me.id,
+    receiver_id: targetType==='user' ? targetId : null,
+    content: m.content,
+    msg_type: m.msg_type
+  });
+  document.querySelector('.sheet')?.remove();
+  if(error){ toast("Erreur : " + error.message); return; }
+  toast("Message transféré !");
 }
 function openEditMessage(msgId){
   const m = messagesById[msgId];
@@ -2653,6 +2703,187 @@ async function sha256(text){
   const enc = new TextEncoder().encode(text);
   const buf = await crypto.subtle.digest('SHA-256', enc);
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ---------------- Mes Codes : espace privé personnel ---------------- */
+let vaultUnlocked = false;
+let vaultItemsCache = [];
+function openVaultAccess(){
+  if(vaultUnlocked){ openVaultContent(); return; }
+  if(!me.vault_code_hash){
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="auth-card" style="max-width:340px;">
+        <h2>Créer ton code "Mes Codes"</h2>
+        <p class="tag">Ce code protège ton espace personnel. Choisis-en un différent du code de verrouillage de l'appli si tu veux.</p>
+        <div class="field"><input id="vault-new-code" type="password" inputmode="numeric" maxlength="6" placeholder="Nouveau code (4 à 6 chiffres)" style="text-align:center;font-size:18px;letter-spacing:4px;"></div>
+        <div class="field"><input id="vault-confirm-code" type="password" inputmode="numeric" maxlength="6" placeholder="Confirme le code" style="text-align:center;font-size:18px;letter-spacing:4px;"></div>
+        <button class="btn gold" onclick="createVaultCode()">Créer</button>
+        <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+      </div>`;
+    document.body.appendChild(overlay);
+  } else {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="auth-card" style="max-width:320px;">
+        <h2>🔐 Mes Codes</h2>
+        <p class="tag">Entre ton code personnel</p>
+        <div class="field"><input id="vault-enter-code" type="password" inputmode="numeric" maxlength="6" placeholder="Code" style="text-align:center;font-size:20px;letter-spacing:6px;" onkeydown="if(event.key==='Enter')checkVaultCode()"></div>
+        <button class="btn gold" onclick="checkVaultCode()">Déverrouiller</button>
+        <button class="btn ghost" style="margin-top:10px;" onclick="this.closest('.modal-overlay').remove()">Annuler</button>
+      </div>`;
+    document.body.appendChild(overlay);
+  }
+}
+async function createVaultCode(){
+  const code = document.getElementById('vault-new-code').value.trim();
+  const confirmCode = document.getElementById('vault-confirm-code').value.trim();
+  if(!/^\d{4,6}$/.test(code)){ toast("Le code doit contenir entre 4 et 6 chiffres."); return; }
+  if(code !== confirmCode){ toast("Les deux codes ne correspondent pas."); return; }
+  const hash = await sha256(code);
+  const { error } = await sb.from('jmtchat_profiles').update({ vault_code_hash:hash }).eq('id', me.id);
+  if(error){ toast("Erreur : " + error.message); return; }
+  me.vault_code_hash = hash;
+  document.querySelector('.modal-overlay')?.remove();
+  vaultUnlocked = true;
+  toast("Code créé !");
+  openVaultContent();
+}
+async function checkVaultCode(){
+  const code = document.getElementById('vault-enter-code').value.trim();
+  const hash = await sha256(code);
+  if(hash === me.vault_code_hash){
+    document.querySelector('.modal-overlay')?.remove();
+    vaultUnlocked = true;
+    openVaultContent();
+  } else {
+    toast("Code incorrect.");
+  }
+}
+async function openVaultContent(){
+  const { data } = await sb.from('jmtchat_vault_items').select('*').order('created_at', { ascending:false });
+  vaultItemsCache = data || [];
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.id = 'vault-sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content" style="max-height:88vh;">
+      <div class="sheet-header"><h3>🔐 Mes Codes</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultNote()">📝 Note</button>
+          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('photo')">📷 Photo</button>
+          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('video')">🎬 Vidéo</button>
+          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('document')">📄 Document</button>
+          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultVoice()">🎤 Vocal</button>
+        </div>
+        <div id="vault-items-list"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+  renderVaultItems();
+}
+function renderVaultItems(){
+  const box = document.getElementById('vault-items-list');
+  if(!box) return;
+  if(!vaultItemsCache.length){ box.innerHTML = '<div class="empty-state">Ton espace est vide pour l\'instant.</div>'; return; }
+  const icons = { note:'📝', photo:'📷', video:'🎬', document:'📄', voice:'🎤' };
+  box.innerHTML = vaultItemsCache.filter(it=>it.id).map(it => `
+    <div style="background:#f7f9fc;border-radius:12px;padding:12px 14px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div style="font-weight:600;font-size:13.5px;">${icons[it.item_type]||'📁'} ${escapeHtml(it.title||'Sans titre')}</div>
+        <span style="color:var(--danger);cursor:pointer;font-size:13px;" onclick="deleteVaultItem('${it.id}')">🗑️</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">${fmtTime(it.created_at)}</div>
+      ${it.item_type==='note' ? `<div style="font-size:13.5px;white-space:pre-wrap;">${escapeHtml(it.content||'')}</div>` : ''}
+      ${it.item_type==='photo' ? `<img src="${it.file_url}" style="max-width:100%;border-radius:8px;">` : ''}
+      ${it.item_type==='video' ? `<video src="${it.file_url}" controls style="max-width:100%;border-radius:8px;"></video>` : ''}
+      ${it.item_type==='voice' ? `<audio src="${it.file_url}" controls style="width:100%;"></audio>` : ''}
+      ${it.item_type==='document' ? `<a href="${it.file_url}" target="_blank" style="color:var(--blue);text-decoration:underline;font-size:13px;">${escapeHtml(it.file_name||'Document')}</a>` : ''}
+    </div>`).join('');
+}
+function addVaultNote(){
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `
+    <div class="sheet-content">
+      <div class="sheet-header"><h3>Nouvelle note</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-body">
+        <div class="field"><label>Titre (optionnel)</label><input id="vault-note-title" type="text"></div>
+        <div class="field"><label>Contenu</label><textarea id="vault-note-content" rows="5" style="width:100%;padding:10px;border-radius:10px;"></textarea></div>
+        <button class="btn" onclick="saveVaultNote()">Enregistrer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sheet);
+}
+async function saveVaultNote(){
+  const title = document.getElementById('vault-note-title').value.trim();
+  const content = document.getElementById('vault-note-content').value.trim();
+  if(!content){ toast("Écris quelque chose."); return; }
+  const { error } = await sb.from('jmtchat_vault_items').insert({ profile_id: me.id, item_type:'note', title: title || 'Note', content });
+  if(error){ toast("Erreur : " + error.message); return; }
+  document.querySelector('.sheet:not(#vault-sheet)')?.remove();
+  await refreshVaultItems();
+  toast("Note enregistrée !");
+}
+function addVaultMedia(type){
+  const acceptMap = { photo:'image/*', video:'video/*', document:'*/*' };
+  triggerFileInput(acceptMap[type], null, async(file)=>{
+    toast("Envoi en cours...");
+    try{
+      const url = await uploadToChat(file, 'vault');
+      const { error } = await sb.from('jmtchat_vault_items').insert({
+        profile_id: me.id, item_type:type, title:file.name, file_url:url, file_name:file.name
+      });
+      if(error){ toast("Erreur : " + error.message); return; }
+      await refreshVaultItems();
+      toast("Ajouté à ton espace personnel !");
+    }catch(e){ toast("Erreur d'envoi."); }
+  });
+}
+let vaultVoiceRecorder = null;
+let vaultVoiceChunks = [];
+let vaultIsRecording = false;
+async function addVaultVoice(){
+  if(!vaultIsRecording){
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      vaultVoiceRecorder = new MediaRecorder(stream);
+      vaultVoiceChunks = [];
+      vaultVoiceRecorder.ondataavailable = e => vaultVoiceChunks.push(e.data);
+      vaultVoiceRecorder.start();
+      vaultIsRecording = true;
+      toast("Enregistrement... touche à nouveau pour arrêter");
+    }catch(e){ toast("Micro non accessible : " + e.message); }
+  } else {
+    vaultVoiceRecorder.onstop = async ()=>{
+      vaultIsRecording = false;
+      const blob = new Blob(vaultVoiceChunks, { type:'audio/webm' });
+      const file = new File([blob], `vocal_${Date.now()}.webm`, { type:'audio/webm' });
+      toast("Envoi du vocal...");
+      try{
+        const url = await uploadToChat(file, 'vault');
+        await sb.from('jmtchat_vault_items').insert({ profile_id: me.id, item_type:'voice', title:'Note vocale', file_url:url });
+        await refreshVaultItems();
+        toast("Vocal enregistré !");
+      }catch(e){ toast("Erreur d'envoi."); }
+      vaultVoiceRecorder.stream.getTracks().forEach(t=>t.stop());
+    };
+    vaultVoiceRecorder.stop();
+  }
+}
+async function deleteVaultItem(itemId){
+  const { error } = await sb.from('jmtchat_vault_items').delete().eq('id', itemId);
+  if(error){ toast("Erreur : " + error.message); return; }
+  await refreshVaultItems();
+  toast("Supprimé.");
+}
+async function refreshVaultItems(){
+  const { data } = await sb.from('jmtchat_vault_items').select('*').order('created_at', { ascending:false });
+  vaultItemsCache = data || [];
+  renderVaultItems();
 }
 function requireUnlock(){
   return new Promise((resolve)=>{
