@@ -605,7 +605,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CREATOR_NAME = "Jean Marc";
 const VAPID_PUBLIC_KEY = "BNmqZQS3cqKX4bwmAP4k9IvNUbyPqUbgETONdLnIBeYfChE7jZ_jH7xGZ_XXPfENCjHRJx5Z5qLOy_NkzWlFQ5A";
-const APP_VERSION = "2026.07.20.17";
+const APP_VERSION = "2026.07.20.19";
 
 /* Correctif hauteur mobile : recalcule la vraie hauteur visible (barre d'adresse Chrome/Safari incluse) */
 function setRealVH(){
@@ -2763,6 +2763,10 @@ async function checkVaultCode(){
     toast("Code incorrect.");
   }
 }
+function closeVaultContent(){
+  vaultUnlocked = false;
+  document.getElementById('vault-sheet')?.remove();
+}
 async function openVaultContent(){
   const { data } = await sb.from('jmtchat_vault_items').select('*').order('created_at', { ascending:false });
   vaultItemsCache = data || [];
@@ -2771,13 +2775,13 @@ async function openVaultContent(){
   sheet.id = 'vault-sheet';
   sheet.innerHTML = `
     <div class="sheet-content" style="max-height:88vh;">
-      <div class="sheet-header"><h3>🔐 Mes Codes</h3><span class="close" onclick="this.closest('.sheet').remove()">✕</span></div>
+      <div class="sheet-header"><h3>🔐 Mes Codes</h3><span class="close" onclick="closeVaultContent()">✕</span></div>
       <div class="sheet-body">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultNote()">📝 Note</button>
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('photo')">📷 Photo</button>
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('video')">🎬 Vidéo</button>
-          <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultVoice()">🎤 Vocal</button>
+          <button id="vault-voice-btn" class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultVoice()">🎤 Vocal</button>
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;" onclick="addVaultMedia('document')">📄 Document</button>
           <button class="btn ghost" style="width:auto;padding:8px 12px;font-size:12.5px;color:var(--blue);" onclick="openChangeVaultCode()">⚙️ Modifier mon code</button>
         </div>
@@ -2874,7 +2878,10 @@ function addVaultMedia(type){
 let vaultVoiceRecorder = null;
 let vaultVoiceChunks = [];
 let vaultIsRecording = false;
+let vaultRecordTimer = null;
+let vaultRecordSeconds = 0;
 async function addVaultVoice(){
+  const btn = document.getElementById('vault-voice-btn');
   if(!vaultIsRecording){
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
@@ -2883,9 +2890,32 @@ async function addVaultVoice(){
       vaultVoiceRecorder.ondataavailable = e => vaultVoiceChunks.push(e.data);
       vaultVoiceRecorder.start();
       vaultIsRecording = true;
-      toast("Enregistrement... touche à nouveau pour arrêter");
+      vaultRecordSeconds = 0;
+      if(btn){
+        btn.style.background = 'var(--danger)';
+        btn.style.color = '#fff';
+        btn.style.borderColor = 'var(--danger)';
+        btn.textContent = '🔴 00:00';
+      }
+      vaultRecordTimer = setInterval(()=>{
+        vaultRecordSeconds++;
+        if(btn){
+          const mn = String(Math.floor(vaultRecordSeconds/60)).padStart(2,'0');
+          const sc = String(vaultRecordSeconds%60).padStart(2,'0');
+          btn.textContent = `🔴 ${mn}:${sc}`;
+        }
+      }, 1000);
+      toast("🎙️ Enregistrement en cours... touche à nouveau pour arrêter");
     }catch(e){ toast("Micro non accessible : " + e.message); }
   } else {
+    clearInterval(vaultRecordTimer);
+    vaultRecordTimer = null;
+    if(btn){
+      btn.style.background = '';
+      btn.style.color = '';
+      btn.style.borderColor = '';
+      btn.textContent = '🎤 Vocal';
+    }
     vaultVoiceRecorder.onstop = async ()=>{
       vaultIsRecording = false;
       const blob = new Blob(vaultVoiceChunks, { type:'audio/webm' });
@@ -4072,6 +4102,7 @@ window.addEventListener('DOMContentLoaded', async ()=>{
     } else {
       if(offlineTimer) clearTimeout(offlineTimer);
       offlineTimer = setTimeout(markOffline, 10000);
+      if(document.getElementById('vault-sheet')) closeVaultContent();
     }
   });
   window.addEventListener('pagehide', markOffline);
